@@ -195,8 +195,8 @@ foreach ($brand in "Alfamart","Alfamidi") {
 }
 if ($staleFound) {
     Write-Host "   -> fired, but nothing has been downloaded for a while." -ForegroundColor Red
-    Write-Host "      The collector now searches All Mail + Trash + Spam, so this is more" -ForegroundColor Red
-    Write-Host "      likely a stale run than a missing mailbox. Check the last collect log:" -ForegroundColor Red
+    Write-Host "      Check the reports still reach the Gmail mailbox the collector reads." -ForegroundColor Red
+    Write-Host "      Per-folder candidate counts are in the last collect log:" -ForegroundColor Red
     Write-Host "      Data\Sent Email\_collect_<brand>.log - the per-folder candidate counts" -ForegroundColor Red
     Write-Host "      say whether the emails were found at all." -ForegroundColor Red
 }

@@ -109,9 +109,9 @@ def list_folders(m):
 def find_special(m, flag):
     r"""A folder by its IMAP special-use flag, e.g. \All, \Trash, \Junk.
 
-    Found by flag rather than name because this mailbox is Indonesian - All Mail
-    is "[Gmail]/Semua Email", Trash is "[Gmail]/Sampah" - so the English names
-    would silently match nothing.
+    Found by flag rather than name because Gmail localises these folder names
+    to the account's display language, so a hardcoded "[Gmail]/Trash" would
+    silently match nothing on a non-English account.
     """
     typ, data = m.list()
     if typ != "OK":
@@ -276,14 +276,13 @@ def main():
         m.logout()
         return
 
-    # Folder history of this one bug:
-    #   INBOX only          -> missed everything once a rule filed the mail
-    #   + All Mail          -> fixed that, but All Mail EXCLUDES Trash and Spam
-    #   + Trash and Spam    -> the IT-side rule that forwards this mailbox on to
-    #                          lmbg.co.id deletes the original, so from
-    #                          2026-09-21 the reports were sitting in Trash and
-    #                          were invisible all over again.
-    # Gmail is the ORIGINAL recipient here; lmbg.co.id is downstream of it.
+    # Search All Mail plus Trash and Spam, which All Mail excludes. INBOX alone
+    # was the original bug: a label or archive rule hides mail from it.
+    #
+    # Verified 2026-09-23: from 2026-09-21 onward NONE of these folders held a
+    # single report email - the reports reach the lmbg.co.id Outlook mailbox
+    # but no copy is kept in this Gmail account. If collection finds nothing,
+    # check the forwarding rule before suspecting this code.
     if args.folder:
         folders = [args.folder]
     else:

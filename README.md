@@ -71,9 +71,10 @@ Then `Data/Sent Email/register_b2b_schedule.ps1`.
   `NextRunTime` quietly rolls to tomorrow - no error anywhere.
 - **"Collect ok" is not "data arrived".** Check `status.ps1`'s freshness section,
   which reads the age of the newest downloaded file, not the task's exit code.
-- **The collector searches All Mail + Trash + Spam**, found by IMAP special-use
-  flag. The mailbox is forwarded on by a rule that deletes the original, and the
-  folder names are localised.
+- **The collector reads Gmail over IMAP** and searches All Mail + Trash + Spam,
+  found by IMAP special-use flag (Gmail localises folder names). If it finds
+  nothing, first check the reports still land in that mailbox at all - on
+  2026-09-21 they stopped, while still reaching a forwarded Outlook copy.
 
 ## Credentials
 
