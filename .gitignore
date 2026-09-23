@@ -1,0 +1,63 @@
+# ALLOWLIST - read this before editing.
+#
+# This tree is mostly business data: ~1,600 spreadsheets, sell-out CSV exports,
+# photos, HAR captures holding live session cookies, plus unrelated projects.
+# So: ignore EVERYTHING, then opt specific code back in, one level at a time.
+# Never flip this to a blocklist - one missed pattern publishes a sales export
+# or a cookie jar. Git cannot re-include a file under an excluded directory,
+# which is why each directory level is re-opened explicitly below.
+
+/*
+!/.gitignore
+!/README.md
+
+# --- Automation: every pipeline + the monitoring tools ----------------------
+!/Automation/
+/Automation/**
+!/Automation/*/
+!/Automation/*.ps1
+!/Automation/*/*.py
+!/Automation/*/*.ps1
+!/Automation/*/*.md
+!/Automation/*/requirements.txt
+!/Automation/*/.env.example
+# scratch watcher from a one-off debugging session
+/Automation/_*.ps1
+
+# --- Data/Sent Email: the Alfamart/Alfamidi B2B pipeline only ---------------
+# (the rest of this folder is other projects and exported data)
+!/Data/
+/Data/*
+!/Data/Sent Email/
+/Data/Sent Email/*
+!/Data/Sent Email/alfamart_b2b_auto.py
+!/Data/Sent Email/alfamidi_b2b_auto.py
+!/Data/Sent Email/imap_b2b_download.py
+!/Data/Sent Email/period_utils.py
+!/Data/Sent Email/run_pipeline.py
+!/Data/Sent Email/run_daily_all.py
+!/Data/Sent Email/run_backfill_today.py
+!/Data/Sent Email/register_b2b_schedule.ps1
+
+# --- per-brand processing steps (1_/2_/3_*.py) that live beside the data -----
+!/Data/Report/
+/Data/Report/*
+!/Data/Report/Sales/
+/Data/Report/Sales/*
+!/Data/Report/Sales/Minimarket/
+/Data/Report/Sales/Minimarket/*
+!/Data/Report/Sales/Minimarket/*/
+/Data/Report/Sales/Minimarket/*/*
+!/Data/Report/Sales/Minimarket/*/*/
+/Data/Report/Sales/Minimarket/*/*/*
+!/Data/Report/Sales/Minimarket/*/*/[0-9]_*.py
+
+# --- belt and braces: never, even if a rule above is loosened ---------------
+.env
+*.log
+*.har
+client_secret_*.json
+token*.json
+*.pickle
+.venv/
+__pycache__/

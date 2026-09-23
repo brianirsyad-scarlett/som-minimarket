@@ -1,0 +1,9 @@
+polars>=1.20
+fastexcel>=0.12
+python-calamine>=0.2
+openpyxl>=3.1
+
+# For the downstream step (Sales csv\primary_sales_csv_and_parquet.py), which the
+# daily run calls after the workbooks are rebuilt.
+pandas>=2.0
+pyarrow>=14
