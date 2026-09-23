@@ -1,0 +1,82 @@
+name: Sell In Pipeline (draft)
+
+# Manual only while this is a draft running beside the local chain. Once its
+# output has matched production for a while, add a schedule after the Anchanto
+# (00:30 WIB) and Odoo runs, e.g. cron "30 18 * * *" = 01:30 WIB.
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "Months to rebuild: YYYY-MM, current or prev, comma-separated"
+        default: "prev,current"
+        required: true
+      anchanto_scope:
+        description: "quarter = same Anchanto files as the local report; all = every file"
+        default: "quarter"
+        type: choice
+        options: [quarter, all]
+
+env:
+  # 'current' / 'prev' are resolved from today's date - make that Jakarta's today.
+  TZ: Asia/Jakarta
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  sell-in:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Download inputs (Odoo, Accurate, E-Stock, Master Data Sales, Anchanto.parquet)
+        run: python download_inputs.py
+
+      - name: Download monthly history
+        run: python download_history.py
+
+      - name: Build monthly workbooks
+        run: |
+          args=()
+          IFS=',' read -ra months <<< "${{ inputs.months }}"
+          for m in "${months[@]}"; do args+=(--month "$(echo "$m" | xargs)"); done
+          python -u sales_monthly_report.py "${args[@]}" --no-backup \
+            --anchanto-scope "${{ inputs.anchanto_scope }}"
+
+      - name: Workbooks -> monthly parquet
+        run: python -u build_primary_parquet.py month work/output/*/*.xlsx
+
+      - name: Combine -> Primary_Sales.parquet
+        run: python -u build_primary_parquet.py combine work/monthly_parquet work/Primary_Sales.parquet
+
+      - name: Compare rebuilt months with production (informational)
+        continue-on-error: true
+        run: |
+          files=()
+          for x in work/output/*/*.xlsx; do files+=("work/monthly_parquet/$(basename "${x%.xlsx}").parquet"); done
+          python -u compare_with_production.py "${files[@]}"
+
+      - name: Upload outputs to GCS
+        run: python upload_outputs.py
+
+      - name: Keep workbooks as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sell-in-monthly-workbooks
+          path: |
+            work/output/*/*.xlsx
+            work/run.log
+          retention-days: 14
