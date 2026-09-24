@@ -72,14 +72,14 @@ Don't match on plain `sat.co.id`: that's Sumber Alfaria Trijaya, the parent of
 
 ## Checking it works
 
-After the next fire (09:00 on the laptop, 09:20 in GitHub), emails arrive about
+After the next fire (07:05 WIB, in GitHub), emails arrive about
 10–65 minutes later. You should see:
 
 1. **Power Automate → My flows → the flow → Run history**: one successful run
    per email.
 2. **GitHub → som-minimarket-automation → Issues**: open issues titled
    `B2B|alfamart|File Excel B2B - …`.
-3. After 11:00 WIB: those issues are **closed**, each with a comment
+3. After 08:05 WIB: those issues are **closed**, each with a comment
    `Saved to gs://bucket_som/sales_parquet/raw/minimarket/…`.
 
 ## Optional: backfill emails that are already in the folder

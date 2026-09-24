@@ -3,12 +3,13 @@ name: SAT + MIDI Sell Out - collect (draft)
 # Power Automate turns every report email into an issue titled "B2B|<brand>|...".
 # This drains those issues: download each link, upload it to the draft bucket,
 # close the issue. Issues cost no Actions minutes, so a day's ~120-250 emails
-# become 3 short runs instead of one run per email.
+# become 2 short runs instead of one run per email.
 #
-# The emails land roughly 10-65 min after the 09:00 fire, so 11:00 should
-# catch everything; 12:00 and 13:00 are backstops. The 13:00 slot also FAILS
-# if a brand had no email at all today - a broken flow must not look like a
-# quiet mailbox.
+# The 07:05 fire's emails land roughly 10-65 min later, so 08:05 should catch
+# most and 09:05 is the backstop. The 09:05 slot also FAILS if a brand had no
+# email at all today - a broken flow must not look like a quiet mailbox.
+# (+5 min past the hour for the same reason as the fire: the top of the hour is
+# GitHub's most congested scheduling minute.)
 on:
   workflow_dispatch:
     inputs:
@@ -17,9 +18,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "0 4 * * *"     # 11:00 WIB
-    - cron: "0 5 * * *"     # 12:00 WIB
-    - cron: "0 6 * * *"     # 13:00 WIB - last slot, --expect-today
+    - cron: "5 1 * * *"     # 08:05 WIB
+    - cron: "5 2 * * *"     # 09:05 WIB - last slot, --expect-today
 
 permissions:
   contents: read
@@ -58,6 +58,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           args=()
-          [ "${{ github.event.schedule }}" = "0 6 * * *" ] && args+=(--expect-today)
+          [ "${{ github.event.schedule }}" = "5 2 * * *" ] && args+=(--expect-today)
           [ "${{ inputs.expect_today }}" = "true" ] && args+=(--expect-today)
           python -u collect_b2b.py "${args[@]}"
