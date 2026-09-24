@@ -143,7 +143,10 @@ def main() -> int:
             continue
 
         blob = bucket.blob(gcs_paths.prefix(brand, report) + filename)
-        if filename in seen_files or blob.exists():
+        # Keyed on the full path, never the bare filename: Alfamart and Alfamidi
+        # name their exports identically, so a filename key made the second
+        # brand's report look "already there" and closed it uncollected.
+        if blob.name in seen_files or blob.exists():
             # Closed periods are re-requested every day and never change.
             already += 1
             gh.close(n, f"Already in `gs://{gcs_paths.BUCKET}/{blob.name}`.", completed=True)
@@ -159,7 +162,7 @@ def main() -> int:
             continue   # left OPEN: the next slot retries it while the link is still alive
 
         blob.upload_from_string(r.content, content_type="text/csv")
-        seen_files.add(filename)
+        seen_files.add(blob.name)
         saved += 1
         print(f"  saved {brand}/{report}/{filename}  ({len(r.content):,} bytes)")
         gh.close(n, f"Saved to `gs://{gcs_paths.BUCKET}/{blob.name}` ({len(r.content):,} bytes).", completed=True)
