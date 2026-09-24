@@ -166,6 +166,7 @@ checks += [("indomaret", "draft by-branch", f"{D}/indomaret/sell_out_branch/"),
            ("indomaret", "PROD sell_out",   f"{P}/indomaret/sell_out/"),
            ("indomaret", "PROD daily",      f"{P}/indomaret/daily_sell_out/")]
 checks += [(c, "draft mkt share", f"{D}/{c}/market_share/") for c in ("alfamart", "alfamidi", "indomaret")]
+checks += [(c, "PROD stock", f"{P}/{c}/stock/") for c in ("alfamart", "alfamidi", "indomaret")]
 checks += [("parquet", "Minimarket_Sales", "sales_parquet/Minimarket_Sales.parquet"),
            ("parquet", "Market_Share",     "sales_parquet/Minimarket_Market_Share.parquet")]
 try:
