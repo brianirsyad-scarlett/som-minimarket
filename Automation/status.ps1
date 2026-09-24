@@ -167,7 +167,7 @@ if ($shownVerifyHeader) { Write-Host "" }
 # not on this disk - so freshness is read from GCS. As before, only the age of
 # the newest file that actually arrived is honest: "the workflow ran" is not
 # "data arrived" (every row read "ok" on 2026-09-20..22 with nothing delivered).
-Write-Host "  Sell-out data freshness, cloud draft (gs://bucket_som/sales_parquet/raw/minimarket):" -ForegroundColor Yellow
+Write-Host "  Alfamart/Alfamidi sell-out freshness (cloud draft -> production, gs://bucket_som):" -ForegroundColor Yellow
 $gcsCheck = @'
 import sys
 from datetime import datetime, timezone
@@ -175,14 +175,17 @@ try:
     from google.cloud import storage
     b = storage.Client().bucket("bucket_som")
     for brand in ("alfamart", "alfamidi"):
-        for rep in ("sell_out_branch", "sell_out_store"):
-            blobs = list(b.list_blobs(prefix=f"sales_parquet/raw/minimarket/{brand}/{rep}/"))
+        for label, prefix in (("draft by-branch", f"sales_parquet/raw/minimarket/{brand}/sell_out_branch/"),
+                              ("draft by-store",  f"sales_parquet/raw/minimarket/{brand}/sell_out_store/"),
+                              ("PROD sell_out",   f"sales_sell out_minimarket/{brand}/sell_out/"),
+                              ("PROD daily_qty",  f"sales_sell out_minimarket/{brand}/daily_sell_out_qty/")):
+            blobs = list(b.list_blobs(prefix=prefix))
             if not blobs:
-                print(f"{brand}|{rep}|none|")
+                print(f"{brand}|{label}|none|")
                 continue
             t = max(x.updated for x in blobs)
             age = (datetime.now(timezone.utc) - t).total_seconds() / 3600
-            print(f"{brand}|{rep}|{age:.1f}|{t.astimezone().strftime('%m-%d %H:%M')}")
+            print(f"{brand}|{label}|{age:.1f}|{t.astimezone().strftime('%m-%d %H:%M')}")
 except Exception as e:
     print(f"ERROR|{type(e).__name__}: {e}")
 '@
