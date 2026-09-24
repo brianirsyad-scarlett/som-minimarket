@@ -1,15 +1,22 @@
-# som-minimarket-automation (draft)
+# som-minimarket-automation
 
 Cloud version of the minimarket sell-out and market-share collection for
 **SAT** (Alfamart), **MIDI** (Alfamidi) and **IDM** (Indomaret), on GitHub Actions.
 
-**Status.** For **Alfamart and Alfamidi sell out** the cloud is the only
-requester, collector and **production publisher** since 2026-09-24: raw files
-land in the draft `gs://bucket_som/sales_parquet/raw/minimarket/…`, and
-`publish_production.py` writes the production `sales_sell out_minimarket/<brand>/…`
-files the laptop used to. The laptop's B2B tasks are disabled.
-**Market share and Indomaret are still drafts**: cloud output goes only to the
-draft path, and the laptop remains their production source.
+**Status (2026-09-24).** The cloud downloads everything into the draft
+`gs://bucket_som/sales_parquet/raw/minimarket/…` and **publishes production**
+from it - no laptop and no manual step:
+
+| Production output | Written by |
+|---|---|
+| `sales_sell out_minimarket/alfamart|alfamidi/…` | `publish_production.py` (after each collect) |
+| `sales_sell out_minimarket/indomaret/{sell_out,daily_sell_out}/` | `publish_indomaret.py` (after the Indomaret download) |
+| `sales_parquet/Minimarket_Sales.parquet` | `build_parquets.py --sales` (after both of the above) |
+| `sales_parquet/Minimarket_Market_Share.parquet` | `build_parquets.py --market-share` (after the market-share download) |
+
+The laptop's B2B tasks are disabled, and its parquet mirror no longer uploads
+the two minimarket parquets. Its four minimarket downloads still run as a
+fallback copy on disk only.
 
 ## What it collects
 
@@ -25,10 +32,10 @@ Draft layout: `sales_parquet/raw/minimarket/<chain>/<market_share|sell_out_branc
 
 | Time | Workflow |
 |---|---|
-| 02:00 | Market share, all three chains |
-| 02:30 | Indomaret sell out by branch + by store |
+| 02:00 | Market share, all three chains, then **publish** `Minimarket_Market_Share.parquet` |
+| 02:30 | Indomaret sell out by branch + by store, then **publish production** + `Minimarket_Sales.parquet` |
 | 07:05 | Alfamart + Alfamidi: request sell-out reports - every request clicked twice; the 2nd reply proves the 1st registered |
-| 08:05, 09:05 | Alfamart + Alfamidi: collect the emailed links, then **publish production** |
+| 08:05, 09:05 | Alfamart + Alfamidi: collect the emailed links, then **publish production** + `Minimarket_Sales.parquet` |
 
 GitHub often starts scheduled runs late. None of these depend on an exact minute.
 
@@ -54,6 +61,18 @@ Issues work as a free queue: they cost no Actions minutes, so a day's
 ~120–250 emails become 2 short runs instead of one run per email. That's what
 keeps this private repo inside GitHub Free's 2,000 minutes a month. The flows
 are set up by hand, see **[docs/power-automate-flows.md](docs/power-automate-flows.md)**.
+
+## Indomaret files are rolling windows
+
+Checked against the DATE column (the first rows only show the last day):
+
+- `DAILY_STORE_PERFORMANCE_<D>` (by store) is the **7 days** ending on D. Production
+  keeps every day's window as-is, as it always has.
+- `DAILY_SELLING_OUT_<D>` (by branch) is the **14 days** ending on D. Because
+  `Minimarket_Sales.parquet` adds up every file, production holds each date
+  once: a `FULL_MONTH` file per closed month, and one month-to-date file per open
+  month, rebuilt daily with the newest numbers per date. When the `FULL_MONTH`
+  arrives, the month-to-date file is moved to the draft's `superseded/`.
 
 ## Setup
 
@@ -103,4 +122,5 @@ the cloud needs it:
 | `alfamart_b2b_auto.py` | TOTP seed read from the environment first; SSO token no longer printed in full |
 | `alfamidi_b2b_auto.py` | SSO token no longer printed in full |
 | `alfamart_b2b_auto.py`, `alfamidi_b2b_auto.py` | `--confirm`: click each request twice and log the portal's 2nd reply |
+| `minimarket_sell_out_converter.py` | none - copied verbatim; `build_parquets.py` calls its `process_files()` |
 | everything else | unchanged |

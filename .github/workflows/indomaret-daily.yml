@@ -1,10 +1,13 @@
-name: Indomaret Sell Out by Branch + by Store (draft)
+name: Indomaret Sell Out - download + publish
 
 # Indomaret publishes these itself - no request/email step like Alfamart and
 # Alfamidi. The newest few of each are downloaded and any not already in the
 # draft bucket are uploaded, so a missed day fills itself in.
 #   report 2 = Daily Selling Out Performance by Branch and Product -> sell_out_branch
 #   report 3 = Daily Selling Out & Stock by Store and Product       -> sell_out_store
+# Then publish_indomaret.py moves them to PRODUCTION (by store as-is; by branch
+# as one month-to-date file per open month, swapped for the FULL_MONTH when it
+# arrives) and Minimarket_Sales.parquet is rebuilt.
 on:
   workflow_dispatch:
   schedule:
@@ -22,7 +25,7 @@ env:
 jobs:
   indomaret-daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -52,3 +55,13 @@ jobs:
 
       - name: Upload by-store
         run: python gcs_upload.py --chain indomaret --report sell_out_store --src "out/Daily Sell Out" --skip-existing --require-files
+
+      # PRODUCTION. Runs even if one upload step failed: whatever reached the
+      # draft still gets published.
+      - name: Publish to production
+        if: ${{ !cancelled() }}
+        run: python -u publish_indomaret.py
+
+      - name: Rebuild Minimarket_Sales.parquet
+        if: ${{ !cancelled() }}
+        run: python -u build_parquets.py --sales

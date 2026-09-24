@@ -73,3 +73,9 @@ jobs:
       - name: Publish to production - Alfamidi
         if: ${{ !cancelled() }}
         run: python -u publish_production.py --brand alfamidi
+
+      # sales_parquet/Minimarket_Sales.parquet, rebuilt from production for all
+      # three chains. It refuses to publish if any account-month would be lost.
+      - name: Rebuild Minimarket_Sales.parquet
+        if: ${{ !cancelled() }}
+        run: python -u build_parquets.py --sales

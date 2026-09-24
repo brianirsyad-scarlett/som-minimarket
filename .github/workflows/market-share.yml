@@ -1,7 +1,10 @@
-name: Market Share (draft)
+name: Market Share - download + publish
 
-# SAT / MIDI / IDM market share, prev + current month, every category.
-# The laptop still runs these at 00:00-01:00 WIB and stays production; this
+# SAT / MIDI / IDM market share, prev + current month, every category, into the
+# draft; then the publish job rebuilds those months in
+# sales_parquet/Minimarket_Market_Share.parquet (PRODUCTION) from the draft,
+# keeping every older month (build_parquets.py --market-share).
+# The laptop's own downloads (00:00-01:00 WIB) no longer feed production; this
 # runs later so the two never log into the same portal account at once.
 on:
   workflow_dispatch:
@@ -65,3 +68,28 @@ jobs:
       # MTD files keep their name all month and change daily, so overwrite.
       - name: Upload to draft GCS
         run: python gcs_upload.py --chain ${{ matrix.chain }} --report market_share --src out/ms --pattern "*.xlsx" --require-files
+
+  # After all three chains, even if one failed: that chain simply keeps its
+  # previous months (the draft still holds yesterday's files).
+  publish:
+    needs: market-share
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      - name: Publish Minimarket_Market_Share.parquet
+        run: python -u build_parquets.py --market-share

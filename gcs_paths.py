@@ -1,10 +1,11 @@
-"""Every GCS location this repo writes, in one place.
+"""Every DRAFT GCS location this repo writes, in one place.
 
-DRAFT ONLY. Production minimarket files live under
-"sales_sell out_minimarket/<brand>/..." and are owned by the laptop
-(Data/Report/Sales/Minimarket/<brand>/Sell Out/3_upload_and_distribute.py).
-Nothing here writes there - moving to production is a cutover decision for
-the user, not something this code does on its own.
+The draft (sales_parquet/raw/minimarket/<chain>/<report>/) holds the portal
+files exactly as downloaded. Production is written only by the publish steps,
+each of which documents its own paths:
+  publish_production.py  Alfamart / Alfamidi -> sales_sell out_minimarket/<brand>/
+  publish_indomaret.py   Indomaret           -> sales_sell out_minimarket/indomaret/
+  build_parquets.py      sales_parquet/Minimarket_Sales.parquet, Minimarket_Market_Share.parquet
 """
 
 BUCKET = "bucket_som"
