@@ -128,6 +128,61 @@ def publish_branch(bucket, brand, today, dry):
     return done
 
 
+# ---------- stock by branch: newest Value+Qty pair per month, as-is ----------
+
+STOCK_RE = re.compile(r"detail_performance_by_branch_Stok_(Value|Qty)_")
+
+
+def publish_stock(bucket, brand, today, dry):
+    """Branch stock (Stok indicator of the by-branch report), current + previous
+    month. Production keeps exactly one Value+Qty pair per month - the newest
+    cut - under the portal's own filename; an older cut of the same month is
+    moved to the draft's stock/superseded/, not deleted."""
+    src_prefix = gcs_paths.prefix(brand, "stock")
+    dest_prefix = f"{PROD_ROOT}/{brand}/stock/"
+    pairs = defaultdict(dict)
+    for b in bucket.list_blobs(prefix=src_prefix):
+        name = b.name.rsplit("/", 1)[-1]
+        m = STOCK_RE.search(name)
+        start, end = dates_of(name)
+        if m and start and "/superseded/" not in b.name:
+            pairs[(start, end)][m.group(1)] = b
+    prod = [b for b in bucket.list_blobs(prefix=dest_prefix)]
+    done = 0
+    for month in branch_months(today):
+        full = [(end, p) for (start, end), p in pairs.items()
+                if start == month["start"] and {"Value", "Qty"} <= p.keys()]
+        if not full:
+            print(f"  stock {month['start']:%Y-%m}: no complete Value+Qty pair in the draft yet")
+            continue
+        end, p = max(full, key=lambda t: t[0])
+        keep = set()
+        for kind in ("Value", "Qty"):
+            src = p[kind]
+            name = src.name.rsplit("/", 1)[-1]
+            keep.add(dest_prefix + name)
+            existing = bucket.get_blob(dest_prefix + name)
+            if existing is not None and existing.md5_hash == src.md5_hash:
+                continue
+            if dry:
+                print(f"  [dry-run] stock -> gs://{bucket.name}/{dest_prefix}{name}")
+            else:
+                bucket.copy_blob(src, bucket, dest_prefix + name)
+                print(f"  published stock {month['start']:%Y-%m} (cut to {end}) -> gs://{bucket.name}/{dest_prefix}{name}")
+        for old in prod:
+            s, _ = dates_of(old.name)
+            if s == month["start"] and old.name not in keep:
+                target = src_prefix + "superseded/" + old.name.rsplit("/", 1)[-1]
+                if dry:
+                    print(f"  [dry-run] move older stock cut {old.name} -> {target}")
+                else:
+                    bucket.copy_blob(old, bucket, target)
+                    old.delete()
+                    print(f"  moved older stock cut -> gs://{bucket.name}/{target}")
+        done += 1
+    return done
+
+
 # ---------- by store: newest snapshot per rolling period ---------------------
 
 def publish_store(bucket, brand, today, dry):
@@ -174,8 +229,10 @@ def main() -> int:
     print(f"--- {a.brand}: draft -> production ({'DRY RUN' if a.dry_run else 'LIVE'}) ---")
     summaries = publish_branch(bucket, a.brand, today, a.dry_run)
     copied, same = publish_store(bucket, a.brand, today, a.dry_run)
+    stock = publish_stock(bucket, a.brand, today, a.dry_run)
     print(f"--- {a.brand}: {summaries} by-branch summary file(s), "
-          f"{copied} by-store file(s) {'to copy' if a.dry_run else 'copied'}, {same} already identical ---")
+          f"{copied} by-store file(s) {'to copy' if a.dry_run else 'copied'}, {same} already identical, "
+          f"{stock} stock month(s) ---")
     return 0
 
 

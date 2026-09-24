@@ -66,7 +66,9 @@ def report_link(body: str):
 
 
 def route(filename: str):
-    # Same markers as the laptop's imap_b2b_download.route_subfolder().
+    # Same markers as the laptop's imap_b2b_download.route_subfolder(), plus stock.
+    if "by_branch_Stok" in filename:
+        return "stock"
     if "by_branch_Selling_Out" in filename:
         return "sell_out_branch"
     if "_All_Store" in filename:

@@ -10,7 +10,8 @@ from it - no laptop and no manual step:
 | Production output | Written by |
 |---|---|
 | `sales_sell out_minimarket/alfamart|alfamidi/…` | `publish_production.py` (after each collect) |
-| `sales_sell out_minimarket/indomaret/{sell_out,daily_sell_out}/` | `publish_indomaret.py` (after the Indomaret download) |
+| `sales_sell out_minimarket/indomaret/{sell_out,daily_sell_out,stock}/` | `publish_indomaret.py` (after the Indomaret download) |
+| `sales_sell out_minimarket/alfamart|alfamidi/stock/` | `publish_production.py` (branch stock, newest Value+Qty pair per month) |
 | `sales_parquet/Minimarket_Sales.parquet` | `build_parquets.py --sales` (after both of the above) |
 | `sales_parquet/Minimarket_Market_Share.parquet` | `build_parquets.py --market-share` (after the market-share download) |
 
@@ -26,7 +27,11 @@ fallback copy on disk only.
 | **Alfamidi** | `market-share.yml` | `b2b-fire.yml` → email → `b2b-collect.yml` | same |
 | **Indomaret** | `market-share.yml` | `indomaret-daily.yml` (report 2) | `indomaret-daily.yml` (report 3) |
 
-Draft layout: `sales_parquet/raw/minimarket/<chain>/<market_share|sell_out_branch|sell_out_store>/`
+**Stock by branch:** Alfamart and Alfamidi through the same by-branch request with
+indicator `b` = Stok (`--stock`, current + previous month, emailed like sell out);
+Indomaret report 10 (`DAILY_STOCK_BRANCH_<D>`, a 3-day window per DC).
+
+Draft layout: `sales_parquet/raw/minimarket/<chain>/<market_share|sell_out_branch|sell_out_store|stock>/`
 
 ## Schedule (WIB)
 
@@ -108,8 +113,6 @@ Checked against the DATE column (the first rows only show the last day):
   write to GCS, but writing into a OneDrive folder would need a Microsoft app
   registration that a non-admin can't create. (The laptop's summary and
   converter steps ARE ported, in `publish_production.py`.)
-- Indomaret **Stock** (report 10). It's one argument away (`--report 2,3,10`)
-  if wanted.
 
 ## Sources
 

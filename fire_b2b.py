@@ -1,7 +1,8 @@
-"""Request the Alfamart / Alfamidi B2B sell-out reports - by store and by branch.
+"""Request the Alfamart / Alfamidi B2B reports - sell out by store and by
+branch, and STOCK by branch.
 
-Same rolling periods as the laptop (period_utils): 3 by-store 10-day periods
-and the current + previous month by branch. Each request set is retried once,
+Same rolling periods as the laptop (period_utils): 3 by-store 10-day periods,
+and the current + previous month by branch (sell out and stock alike). Each request set is retried once,
 and the run EXITS NON-ZERO when any set never reached the portal.
 
     python fire_b2b.py --brand alfamart
@@ -43,12 +44,15 @@ QUEUED_MARK = "akan dikirim"       # freshly queued: the link will be emailed
 counts = {"confirmed": 0, "healed": 0, "unconfirmed": 0}
 
 
-def fire(trigger: Path, only: str, start: date, end: date) -> int:
+def fire(trigger: Path, only: str, start: date, end: date, stock: bool = False) -> int:
     cmd = [sys.executable, "-u", str(trigger), "--only", only,
            "--start", start.isoformat(), "--end", end.isoformat(), "--confirm"]
+    if stock:
+        cmd.append("--stock")
+    label = f"{only} stock" if stock else only
     rc = 0
     for attempt in range(1, ATTEMPTS + 1):
-        print(f"\n=== {only} {start} .. {end}  (attempt {attempt}/{ATTEMPTS}) ===", flush=True)
+        print(f"\n=== {label} {start} .. {end}  (attempt {attempt}/{ATTEMPTS}) ===", flush=True)
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
         sys.stdout.write(r.stdout)
         sys.stdout.write(r.stderr)
@@ -85,6 +89,9 @@ def main() -> int:
     for m in branch_months(today):
         if fire(trigger, "by-branch", m["start"], m["end"]) != 0:
             failures.append(f"by-branch {m['start']}..{m['end']}")
+    for m in branch_months(today):
+        if fire(trigger, "by-branch", m["start"], m["end"], stock=True) != 0:
+            failures.append(f"stock by-branch {m['start']}..{m['end']}")
 
     c = counts
     summary = (f"{a.brand}: {c['confirmed']} confirmed by the 2nd click, "

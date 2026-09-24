@@ -12,7 +12,7 @@ BUCKET = "bucket_som"
 ROOT = "sales_parquet/raw/minimarket"
 
 CHAINS = ("alfamart", "alfamidi", "indomaret")
-REPORTS = ("market_share", "sell_out_branch", "sell_out_store")
+REPORTS = ("market_share", "sell_out_branch", "sell_out_store", "stock")
 
 
 def prefix(chain: str, report: str) -> str:

@@ -24,6 +24,10 @@ by branch DAILY_SELLING_OUT_<D>_...        = a 14-day window ending on D
           day (e.g. 50 -> 51 units), so the newest is the most correct.
           When a FULL_MONTH arrives it is published and that month's MTD file is
           moved to the draft's sell_out_branch/superseded/ (moved, not deleted).
+
+stock     DAILY_STOCK_BRANCH_<D>_...        = a 3-day window ending on D, per DC
+          (national / DC / store split). Kept one-per-day as-is, like by store,
+          in stock/.
 """
 
 import argparse
@@ -44,7 +48,8 @@ sys.path.insert(0, str(HERE / "sources"))
 import gcs_paths  # noqa: E402
 
 PROD = "sales_sell out_minimarket/indomaret"
-STORE_RE = re.compile(r"^DAILY_STORE_PERFORMANCE_(\d{8})_.*\.zip$")
+STORE_RE = re.compile(r"^DAILY_STORE_PERFORMANCE_(\d{8})_.*\.(zip|csv)$")
+STOCK_RE = re.compile(r"^DAILY_STOCK_BRANCH_(\d{8})_.*\.(zip|csv)$")
 WINDOW_RE = re.compile(r"^DAILY_SELLING_OUT_(\d{8})_.*\.(zip|csv)$")
 FULL_RE = re.compile(r"^DAILY_SELLING_OUT_FULL_MONTH_(\d{6})_.*\.(zip|csv)$")
 problems = []
@@ -80,22 +85,24 @@ def name(blob) -> str:
 
 # ------------------------------------------------------------ by store -----
 
-def publish_store(bucket, dry: bool) -> None:
-    have = {name(b) for b in bucket.list_blobs(prefix=f"{PROD}/daily_sell_out/")}
-    todo = sorted((b for b in bucket.list_blobs(prefix=gcs_paths.prefix("indomaret", "sell_out_store"))
-                   if STORE_RE.match(name(b)) and name(b)[:-4] + ".csv" not in have), key=name)
-    print(f"--- by store: {len(todo)} new window(s) to publish ---")
+def publish_windows(bucket, dry: bool, label: str, report: str, pattern, prod_sub: str, days: int) -> None:
+    """Windows that production keeps one-per-day, as-is (by store: 7 days;
+    stock: 3 days). Each is unpacked, its date range checked, then uploaded."""
+    have = {name(b) for b in bucket.list_blobs(prefix=f"{PROD}/{prod_sub}/")}
+    todo = sorted((b for b in bucket.list_blobs(prefix=gcs_paths.prefix("indomaret", report))
+                   if pattern.match(name(b)) and name(b).rsplit(".", 1)[0] + ".csv" not in have), key=name)
+    print(f"--- {label}: {len(todo)} new window(s) to publish ---")
     for b in todo:
-        d8 = STORE_RE.match(name(b)).group(1)
-        dest = f"{PROD}/daily_sell_out/{name(b)[:-4]}.csv"
+        d8 = pattern.match(name(b)).group(1)
+        dest = f"{PROD}/{prod_sub}/{name(b).rsplit('.', 1)[0]}.csv"
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as fh:
             fh.write(unpack(b.download_as_bytes()))
             path = fh.name
         dates = pd.read_csv(path, sep="|", usecols=["DATE"], dtype=str)["DATE"]
         lo, hi = dates.min(), dates.max()
-        want_lo = (pd.Timestamp(iso(d8)) - pd.Timedelta(days=6)).strftime("%Y-%m-%d")
+        want_lo = (pd.Timestamp(iso(d8)) - pd.Timedelta(days=days - 1)).strftime("%Y-%m-%d")
         if (lo, hi) != (want_lo, iso(d8)):
-            problems.append(f"by-store {name(b)}: dates {lo}..{hi}, expected {want_lo}..{iso(d8)} - NOT published")
+            problems.append(f"{label} {name(b)}: dates {lo}..{hi}, expected {want_lo}..{iso(d8)} - NOT published")
             Path(path).unlink()
             continue
         if dry:
@@ -202,7 +209,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     bucket = storage.Client().bucket(gcs_paths.BUCKET)
-    publish_store(bucket, a.dry_run)
+    publish_windows(bucket, a.dry_run, "by store", "sell_out_store", STORE_RE, "daily_sell_out", 7)
+    publish_windows(bucket, a.dry_run, "stock", "stock", STOCK_RE, "stock", 3)
     publish_branch(bucket, a.dry_run)
     for p in problems:
         print(f"::warning::{p}")

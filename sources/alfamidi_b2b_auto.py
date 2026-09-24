@@ -77,6 +77,9 @@ UA = (
 
 # Fixed filter values, matching what the browser sends for these two reports.
 INDICATOR = ("a", "Selling Out")          # the only indicator these two forms offer
+# Form 5 (by branch) also offers "b" = Stok - same endpoint, same email
+# delivery; files come back as detail_performance_by_branch_Stok_<unit>_...
+STOCK_INDICATOR = ("b", "Stok")
 BRANCH = ("nas", "NASIONAL")              # whole country
 ITEM = ("all", "All Item")
 STORE = ("all", "All Store")
@@ -184,20 +187,20 @@ def _fname_part(text):
     return re.sub(r"\s", "_", text).replace("(", "").replace(")", "")
 
 
-def build_by_branch(unit, tgla, tglb):
+def build_by_branch(unit, tgla, tglb, indicator=INDICATOR):
     """tipe_prf=5 - Performance by Item by Branch by Day, all categories."""
     u, unit_text = unit
-    texts = [INDICATOR[1], unit_text, "All Category", ITEM[1], BRANCH[1]]
+    texts = [indicator[1], unit_text, "All Category", ITEM[1], BRANCH[1]]
     return {
         "tipe_prf": "5",
-        "opt": INDICATOR[0],
+        "opt": indicator[0],
         "u": u,
         "br": BRANCH[0],
         "cat": "all",
         "plu": ITEM[0],
         "tgla": tgla,
         "tglb": tglb,
-        "indicatortext": INDICATOR[1],
+        "indicatortext": indicator[1],
         "unittext": unit_text,
         "categorytext": "All Category",
         "itemtext": ITEM[1],
@@ -323,9 +326,13 @@ def main():
                     help="fire only the first N jobs (for a single-shot verification)")
     ap.add_argument("--skip", type=int, default=0,
                     help="skip the first N jobs (e.g. ones already fired)")
+    ap.add_argument("--stock", action="store_true",
+                    help="by-branch STOK instead of Selling Out (implies --only by-branch)")
     ap.add_argument("--confirm", action="store_true",
                     help="click every request twice; the second reply proves the first registered")
     args = ap.parse_args()
+    if args.stock:
+        args.only = "by-branch"
 
     tgla, tglb = resolve_dates(args)
 
@@ -351,7 +358,7 @@ def main():
             jobs.append(
                 ("perfsales/modular/bibdbs/by-branch",
                  f"By Branch / Daily / {unit[1]}",
-                 build_by_branch(unit, tgla, tglb),
+                 build_by_branch(unit, tgla, tglb, STOCK_INDICATOR if args.stock else INDICATOR),
                  None)
             )
     if args.only != "by-branch":
