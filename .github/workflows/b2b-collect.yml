@@ -1,8 +1,9 @@
-name: SAT + MIDI Sell Out - collect (draft)
+name: SAT + MIDI Sell Out - collect + publish
 
 # Power Automate turns every report email into an issue titled "B2B|<brand>|...".
 # This drains those issues: download each link, upload it to the draft bucket,
-# close the issue. Issues cost no Actions minutes, so a day's ~120-250 emails
+# close the issue, then publish to the production sell-out paths
+# (publish_production.py). Issues cost no Actions minutes, so a day's ~120-250 emails
 # become 2 short runs instead of one run per email.
 #
 # The 07:05 fire's emails land roughly 10-65 min later, so 08:05 should catch
@@ -61,3 +62,14 @@ jobs:
           [ "${{ github.event.schedule }}" = "5 2 * * *" ] && args+=(--expect-today)
           [ "${{ inputs.expect_today }}" = "true" ] && args+=(--expect-today)
           python -u collect_b2b.py "${args[@]}"
+
+      # PRODUCTION. Runs even when collect reported a problem (an expired link,
+      # a missing brand): whatever did reach the draft still gets published,
+      # and the collect step's red status stays visible on its own.
+      - name: Publish to production - Alfamart
+        if: ${{ !cancelled() }}
+        run: python -u publish_production.py --brand alfamart
+
+      - name: Publish to production - Alfamidi
+        if: ${{ !cancelled() }}
+        run: python -u publish_production.py --brand alfamidi

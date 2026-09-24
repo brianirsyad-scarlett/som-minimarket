@@ -3,12 +3,13 @@
 Cloud version of the minimarket sell-out and market-share collection for
 **SAT** (Alfamart), **MIDI** (Alfamidi) and **IDM** (Indomaret), on GitHub Actions.
 
-**Status: DRAFT.** For Alfamart and Alfamidi sell out, the cloud is now the only
-requester and collector: the laptop's B2B fire / verify / collect tasks were
-disabled on 2026-09-24. Market share and Indomaret still also run on the laptop.
-Everything here writes to `gs://bucket_som/sales_parquet/raw/minimarket/…`,
-never to the production `sales_sell out_minimarket/…` names. Switching over is
-a decision for later, not something this code does on its own.
+**Status.** For **Alfamart and Alfamidi sell out** the cloud is the only
+requester, collector and **production publisher** since 2026-09-24: raw files
+land in the draft `gs://bucket_som/sales_parquet/raw/minimarket/…`, and
+`publish_production.py` writes the production `sales_sell out_minimarket/<brand>/…`
+files the laptop used to. The laptop's B2B tasks are disabled.
+**Market share and Indomaret are still drafts**: cloud output goes only to the
+draft path, and the laptop remains their production source.
 
 ## What it collects
 
@@ -26,9 +27,8 @@ Draft layout: `sales_parquet/raw/minimarket/<chain>/<market_share|sell_out_branc
 |---|---|
 | 02:00 | Market share, all three chains |
 | 02:30 | Indomaret sell out by branch + by store |
-| 07:05 | Alfamart + Alfamidi: request sell-out reports |
-| 07:15 (fire + 10 min) | Alfamart + Alfamidi: verify - re-request inside the portal's 1-hour cooldown |
-| 08:05, 09:05 | Alfamart + Alfamidi: collect the emailed links |
+| 07:05 | Alfamart + Alfamidi: request sell-out reports - every request clicked twice; the 2nd reply proves the 1st registered |
+| 08:05, 09:05 | Alfamart + Alfamidi: collect the emailed links, then **publish production** |
 
 GitHub often starts scheduled runs late. None of these depend on an exact minute.
 
@@ -45,6 +45,9 @@ b2b-fire.yml ──► portal ──► email ──► Outlook (lmbg.co.id)
                                         │ b2b-collect.yml (08:05 / 09:05 WIB)
                                         ▼
                   download → gs://…/draft path → close issue
+                                        │ publish_production.py
+                                        ▼
+            production: sales_sell out_minimarket/<brand>/{sell_out, daily_sell_out_qty, daily_sell_out_value}/
 ```
 
 Issues work as a free queue: they cost no Actions minutes, so a day's
@@ -82,10 +85,10 @@ are set up by hand, see **[docs/power-automate-flows.md](docs/power-automate-flo
 
 ## Not ported yet
 
-- The laptop's per-brand processing (`1_summary_sell_out.py`,
-  `2_csv_converter.py`) and the **OneDrive → iMac copy**. The cloud can write
-  to GCS, but writing into a OneDrive folder would need a Microsoft app
-  registration that a non-admin can't create.
+- The **OneDrive → iMac copy** of Alfamart/Alfamidi sell out. The cloud can
+  write to GCS, but writing into a OneDrive folder would need a Microsoft app
+  registration that a non-admin can't create. (The laptop's summary and
+  converter steps ARE ported, in `publish_production.py`.)
 - Indomaret **Stock** (report 10). It's one argument away (`--report 2,3,10`)
   if wanted.
 
@@ -99,4 +102,5 @@ the cloud needs it:
 | `indomaret_daily_reports.py` | `--out` folder; `--report 2,3` in one login |
 | `alfamart_b2b_auto.py` | TOTP seed read from the environment first; SSO token no longer printed in full |
 | `alfamidi_b2b_auto.py` | SSO token no longer printed in full |
+| `alfamart_b2b_auto.py`, `alfamidi_b2b_auto.py` | `--confirm`: click each request twice and log the portal's 2nd reply |
 | everything else | unchanged |

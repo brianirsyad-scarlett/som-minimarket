@@ -341,6 +341,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--skip", type=int, default=0)
+    ap.add_argument("--confirm", action="store_true",
+                    help="click every request twice; the second reply proves the first registered")
     args = ap.parse_args()
 
     tgla, tglb = resolve_dates(args)
@@ -408,6 +410,18 @@ def main():
             print(f"          OK   {payload['filename']}")
             if msg:
                 print(f"               portal: {msg}")
+            if args.confirm:
+                # Second click on the same request, straight away. The portal
+                # refuses to re-queue an export within an hour, so a reply of
+                # "Sudah diajukan dalam 1 jam terakhir" proves the first click
+                # registered. "Akan dikirim" means the first did NOT register
+                # and this click queued it instead - healed either way.
+                time.sleep(1)
+                try:
+                    _, msg2 = post_request_download(s, path, payload, csrf_token)
+                except requests.RequestException as exc:
+                    msg2 = f"FAILED {type(exc).__name__}: {exc}"
+                print(f"               confirm: {msg2}")
         else:
             fail += 1
             print(f"          FAIL {msg}")

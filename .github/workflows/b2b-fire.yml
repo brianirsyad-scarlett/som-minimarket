@@ -1,19 +1,19 @@
-name: SAT + MIDI Sell Out - request + verify (draft)
+name: SAT + MIDI Sell Out - request (draft)
 
 # Requests the by-store (3 rolling 10-day periods) and by-branch (current +
-# previous month) sell-out exports, then verifies 10 minutes later. The portal
-# emails a link per report; b2b-collect.yml downloads them at 08:05 and 09:05.
+# previous month) sell-out exports. The portal emails a link per report;
+# b2b-collect.yml downloads them at 08:05 and 09:05 and publishes production.
 #
-# Fire and verify are steps of ONE job with a fixed 10-minute wait between,
-# not two schedules: GitHub often starts scheduled runs late, and a separate
-# 07:10 verify could then run BEFORE a late 07:00 fire. The verify only means
-# something inside the portal's 1-hour cooldown, and this keeps it there.
+# Verification is built in and costs almost nothing: every request is clicked
+# twice, back to back. The portal refuses to re-queue within an hour, so the
+# second reply ("Sudah diajukan dalam 1 jam terakhir") proves the first click
+# registered. This replaced a separate verify pass 10 minutes later, which
+# spent ~10 billed runner-minutes a day doing nothing but sleep.
 #
 # 07:05, not 07:00: the top of the hour - and 00:00 UTC above all - is GitHub's
 # busiest scheduling minute, when runs are delayed most and can be dropped.
 #
-# This is the ONLY fire. The laptop's B2B_Fire_0700 / B2B_Verify_0710 /
-# B2B_Collect_Morning were disabled on 2026-09-24 when this took over.
+# This is the ONLY fire. The laptop's B2B tasks were disabled on 2026-09-24.
 on:
   workflow_dispatch:
   schedule:
@@ -28,9 +28,9 @@ env:
   PYTHONIOENCODING: utf-8
 
 jobs:
-  fire-and-verify:
+  fire:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       # One login per chain covers market share and B2B (verified on the laptop).
       ALFAMART_B2B_USER: ${{ secrets.ALFAMART_USERNAME }}
@@ -48,23 +48,10 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Fire - Alfamart
+      - name: Fire - Alfamart (each request clicked twice)
         run: python -u fire_b2b.py --brand alfamart
 
-      # !cancelled(): a failed fire must not skip the rest - the verify is
-      # exactly what heals a fire that missed requests.
-      - name: Fire - Alfamidi
+      # !cancelled(): one brand failing must not stop the other.
+      - name: Fire - Alfamidi (each request clicked twice)
         if: ${{ !cancelled() }}
         run: python -u fire_b2b.py --brand alfamidi
-
-      - name: Wait 10 minutes (verify must land inside the 1-hour cooldown)
-        if: ${{ !cancelled() }}
-        run: sleep 600
-
-      - name: Verify - Alfamart
-        if: ${{ !cancelled() }}
-        run: python -u fire_b2b.py --brand alfamart --verify
-
-      - name: Verify - Alfamidi
-        if: ${{ !cancelled() }}
-        run: python -u fire_b2b.py --brand alfamidi --verify

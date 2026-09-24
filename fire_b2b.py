@@ -5,18 +5,19 @@ and the current + previous month by branch. Each request set is retried once,
 and the run EXITS NON-ZERO when any set never reached the portal.
 
     python fire_b2b.py --brand alfamart
-    python fire_b2b.py --brand alfamidi --verify   # ~10 min later, inside the cooldown
+    python fire_b2b.py --brand alfamidi
+
+Every request is clicked TWICE, back to back (the trigger scripts' --confirm).
+The portal refuses to re-queue an export within an hour, so the second reply
+says what the first click achieved - no separate verify pass, no waiting:
+
+    "Sudah diajukan dalam 1 jam terakhir"  -> the first click registered   (confirmed)
+    "Akan dikirim ... email"               -> the first click did NOT; the
+                                              second one queued it       (healed)
 
 The portal does not return files. It emails a signed download link per report;
 Power Automate turns each email into a GitHub issue, and collect_b2b.py
 downloads them.
-
---verify re-runs exactly the same requests. The portal refuses to re-queue an
-export within an hour, so each reply says what the first fire achieved:
-
-    "Sudah diajukan dalam 1 jam terakhir"  -> the fire registered it   (confirmed)
-    "Akan dikirim ... email"               -> the fire MISSED it, and
-                                              this verify just queued it (healed)
 """
 
 import argparse
@@ -39,12 +40,12 @@ ATTEMPTS = 2
 RETRY_SECONDS = 30
 COOLDOWN_MARK = "sudah diajukan"   # already requested within the hour
 QUEUED_MARK = "akan dikirim"       # freshly queued: the link will be emailed
-counts = {"confirmed": 0, "queued": 0}
+counts = {"confirmed": 0, "healed": 0, "unconfirmed": 0}
 
 
 def fire(trigger: Path, only: str, start: date, end: date) -> int:
     cmd = [sys.executable, "-u", str(trigger), "--only", only,
-           "--start", start.isoformat(), "--end", end.isoformat()]
+           "--start", start.isoformat(), "--end", end.isoformat(), "--confirm"]
     rc = 0
     for attempt in range(1, ATTEMPTS + 1):
         print(f"\n=== {only} {start} .. {end}  (attempt {attempt}/{ATTEMPTS}) ===", flush=True)
@@ -54,11 +55,13 @@ def fire(trigger: Path, only: str, start: date, end: date) -> int:
         sys.stdout.flush()
         rc = r.returncode
         for line in r.stdout.lower().splitlines():
-            if "portal:" in line:
+            if "confirm:" in line:
                 if COOLDOWN_MARK in line:
                     counts["confirmed"] += 1
                 elif QUEUED_MARK in line:
-                    counts["queued"] += 1
+                    counts["healed"] += 1
+                else:
+                    counts["unconfirmed"] += 1
         if rc == 0:
             return 0
         if attempt < ATTEMPTS:
@@ -71,8 +74,6 @@ def fire(trigger: Path, only: str, start: date, end: date) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--brand", required=True, choices=sorted(TRIGGERS))
-    ap.add_argument("--verify", action="store_true",
-                    help="second pass inside the cooldown: report what the first fire registered")
     a = ap.parse_args()
 
     today = date.today()   # the workflow sets TZ=Asia/Jakarta
@@ -85,16 +86,15 @@ def main() -> int:
         if fire(trigger, "by-branch", m["start"], m["end"]) != 0:
             failures.append(f"by-branch {m['start']}..{m['end']}")
 
-    label = "verify" if a.verify else "fire"
-    summary = f"{a.brand} {label}: {counts['confirmed']} already registered, {counts['queued']} newly queued"
-    if a.verify:
-        if counts["queued"]:
-            # The first fire missed these. They are queued now (self-healed),
-            # but it should be visible, not buried in a log.
-            print(f"::warning::{a.brand}: the fire missed {counts['queued']} request(s); verify queued them")
-            summary += " - the fire MISSED these, verify healed them"
-        else:
-            summary += " - the fire registered everything"
+    c = counts
+    summary = (f"{a.brand}: {c['confirmed']} confirmed by the 2nd click, "
+               f"{c['healed']} missed by the 1st click and queued by the 2nd, "
+               f"{c['unconfirmed']} with no clear 2nd reply")
+    if c["healed"]:
+        print(f"::warning::{a.brand}: {c['healed']} request(s) did not register on the first click "
+              f"(the second click queued them)")
+    if c["unconfirmed"]:
+        print(f"::warning::{a.brand}: {c['unconfirmed']} request(s) got no recognisable second reply")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a", encoding="utf-8") as fh:
@@ -102,7 +102,7 @@ def main() -> int:
     print(f"\n=== {summary} ===")
 
     if failures:
-        print(f"=== {a.brand} {label}: FAILED - {len(failures)} request set(s) never reached the portal ===")
+        print(f"=== {a.brand}: FAILED - {len(failures)} request set(s) never reached the portal ===")
         for f in failures:
             print(f"      {f}")
         return 1
