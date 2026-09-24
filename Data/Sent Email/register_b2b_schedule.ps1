@@ -27,8 +27,15 @@
 #
 # NOTE: tasks on this machine must run under the Interactive principal - S4U and
 # SYSTEM register fine but silently never execute.
+# !! SINCE 2026-09-24 THE CLOUD DOES THIS. Alfamart/Alfamidi sell out is
+# requested, verified and collected by GitHub Actions
+# (brianirsyad-scarlett/som-minimarket-automation: 07:05 fire, +10 min verify,
+# 08:05 / 09:05 collect). The laptop tasks this script registers were DISABLED.
+# Re-registering them would request every report twice a day, so the script
+# refuses unless you pass -AlsoOnLaptop on purpose.
 [CmdletBinding()]
 param(
+    [switch] $AlsoOnLaptop,
     [string] $FireAt    = "09:00",
     [string] $CollectAt = "11:00",
     [int]    $EveryMin  = 60,
@@ -55,6 +62,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $AlsoOnLaptop -and -not $Rollback) {
+    throw ("Alfamart/Alfamidi sell out now runs in GitHub Actions (som-minimarket-automation). " +
+           "Re-registering the laptop tasks would fire every report twice. Pass -AlsoOnLaptop to do it anyway.")
+}
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $py   = "C:\Users\BrianRinaldyIrsyad\AppData\Local\Python\bin\python.exe"
 $runner = Join-Path $here "run_daily_all.py"

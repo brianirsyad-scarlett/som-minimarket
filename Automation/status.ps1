@@ -162,43 +162,58 @@ foreach ($b in @("alfamart","alfamidi")) {
 }
 if ($shownVerifyHeader) { Write-Host "" }
 
-# A poll that finds nothing is still a SUCCESSFUL poll, so "Collect ... ok" says
-# only that the mailbox was reachable - not that any data arrived. Between
-# 2026-09-20 and 2026-09-22 every row above read "ok" while nothing at all had
-# been delivered for two days. The only honest check is the age of the newest
-# file actually on disk.
-Write-Host "  Sell-out data freshness (what actually arrived):" -ForegroundColor Yellow
+# Since 2026-09-24 Alfamart/Alfamidi sell out is requested and collected in the
+# cloud (GitHub som-minimarket-automation) and lands in the DRAFT bucket path,
+# not on this disk - so freshness is read from GCS. As before, only the age of
+# the newest file that actually arrived is honest: "the workflow ran" is not
+# "data arrived" (every row read "ok" on 2026-09-20..22 with nothing delivered).
+Write-Host "  Sell-out data freshness, cloud draft (gs://bucket_som/sales_parquet/raw/minimarket):" -ForegroundColor Yellow
+$gcsCheck = @'
+import sys
+from datetime import datetime, timezone
+try:
+    from google.cloud import storage
+    b = storage.Client().bucket("bucket_som")
+    for brand in ("alfamart", "alfamidi"):
+        for rep in ("sell_out_branch", "sell_out_store"):
+            blobs = list(b.list_blobs(prefix=f"sales_parquet/raw/minimarket/{brand}/{rep}/"))
+            if not blobs:
+                print(f"{brand}|{rep}|none|")
+                continue
+            t = max(x.updated for x in blobs)
+            age = (datetime.now(timezone.utc) - t).total_seconds() / 3600
+            print(f"{brand}|{rep}|{age:.1f}|{t.astimezone().strftime('%m-%d %H:%M')}")
+except Exception as e:
+    print(f"ERROR|{type(e).__name__}: {e}")
+'@
 $staleFound = $false
-foreach ($brand in "Alfamart","Alfamidi") {
-    foreach ($sub in "Sell Out","Daily Sell Out") {
-        $p = "$SOM\Data\Report\Sales\Minimarket\$brand\$sub"
-        if (-not (Test-Path $p)) { continue }
-        # Only the portal's own downloads count. These folders also hold converter
-        # OUTPUT (202609_Sell Out Alfamart_Sell Out.csv) and the converter scripts
-        # themselves, and a converter run would otherwise look like fresh data -
-        # which is exactly the false green this check exists to prevent.
-        $newest = Get-ChildItem $p -File -Recurse -Filter "detail_performance*" -ErrorAction SilentlyContinue |
-                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if (-not $newest) {
-            # Not a fault: Alfamart\Sell Out holds monthly aggregates only, the
-            # by-store downloads land in Daily Sell Out.
-            Write-Host ("   {0,-9} {1,-16} (no portal downloads routed here)" -f $brand, $sub) -ForegroundColor DarkGray
-            continue
-        }
-        $ageH = ((Get-Date) - $newest.LastWriteTime).TotalHours
-        # The fire runs daily, so anything past ~36h means deliveries have stopped.
-        $colour = if ($ageH -gt 36) { "Red" } elseif ($ageH -gt 20) { "Yellow" } else { "Green" }
-        if ($ageH -gt 36) { $staleFound = $true }
-        Write-Host ("   {0,-9} {1,-16} newest {2}  ({3:N0}h ago)" -f `
-            $brand, $sub, $newest.LastWriteTime.ToString("MM-dd HH:mm"), $ageH) -ForegroundColor $colour
+# Read with the service-account key (the same one the cloud uses as GCP_SA_KEY),
+# not gcloud's application-default login: that personal login expires and then
+# needs an interactive re-auth - it did on 2026-09-24 - and a monitor must not
+# go blind because somebody's browser session lapsed.
+$saKey = "$SOM\Data\Sent Email\sales-som datawarehouse 490008.json"
+$prevCreds = $env:GOOGLE_APPLICATION_CREDENTIALS
+if (Test-Path $saKey) { $env:GOOGLE_APPLICATION_CREDENTIALS = $saKey }
+try { $lines = $gcsCheck | python - 2>$null }
+finally { $env:GOOGLE_APPLICATION_CREDENTIALS = $prevCreds }
+foreach ($l in $lines) {
+    $f = $l -split '\|'
+    if ($f[0] -eq 'ERROR') { Write-Host "   could not read GCS: $($f[1])" -ForegroundColor Red; $staleFound = $true; continue }
+    if ($f[2] -eq 'none') {
+        Write-Host ("   {0,-9} {1,-16} nothing yet" -f $f[0], $f[1]) -ForegroundColor Yellow
+        continue
     }
+    $ageH = [double]$f[2]
+    # One fire a day, so anything past ~36h means deliveries have stopped.
+    $colour = if ($ageH -gt 36) { "Red" } elseif ($ageH -gt 20) { "Yellow" } else { "Green" }
+    if ($ageH -gt 36) { $staleFound = $true }
+    Write-Host ("   {0,-9} {1,-16} newest {2}  ({3:N0}h ago)" -f $f[0], $f[1], $f[3], $ageH) -ForegroundColor $colour
 }
 if ($staleFound) {
-    Write-Host "   -> fired, but nothing has been downloaded for a while." -ForegroundColor Red
-    Write-Host "      Check the reports still reach the Gmail mailbox the collector reads." -ForegroundColor Red
-    Write-Host "      Per-folder candidate counts are in the last collect log:" -ForegroundColor Red
-    Write-Host "      Data\Sent Email\_collect_<brand>.log - the per-folder candidate counts" -ForegroundColor Red
-    Write-Host "      say whether the emails were found at all." -ForegroundColor Red
+    Write-Host "   -> nothing new for a while. Check, in order:" -ForegroundColor Red
+    Write-Host "      1. GitHub Actions in som-minimarket-automation - did the 07:05 fire and 08:05/09:05 collect run green?" -ForegroundColor Red
+    Write-Host "      2. GitHub Issues there - are B2B|... issues being created? If not, the Power Automate flows stopped." -ForegroundColor Red
+    Write-Host "      3. Outlook Inbox\Alfamart and \Alfamidi - are report emails still arriving at all?" -ForegroundColor Red
 }
 Write-Host ""
 
