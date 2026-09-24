@@ -25,7 +25,7 @@ case "${1:-}" in
 esac
 
 for attempt in 1 2 3; do
-  if out=$(gh workflow run "$WF" --repo "$OWNER/$REPO" "${ARGS[@]}" 2>&1); then
+  if out=$(gh workflow run "$WF" --repo "$OWNER/$REPO" ${ARGS[@]+"${ARGS[@]}"} 2>&1); then
     echo "$(date '+%F %T')  $1  started  $out" >> "$LOG"
     exit 0
   fi
