@@ -27,7 +27,6 @@ $pipelines = @(
     @{ Group="MIDI"; Name="Market Share";   Task="Alfamidi Market Share Download";    Log=@("$AUTO\Alfamidi-MarketShare\run.log");    Kind="py"  }
     @{ Group="B2B";  Name="Fire (AM)";      Task="B2B_Fire_0700";                     Log=@("$MAIL\_fire_alfamart.log","$MAIL\_fire_alfamidi.log");       Kind="b2b" }
     @{ Group="B2B";  Name="Collect (AM)";   Task="B2B_Collect_Morning";               Log=@("$MAIL\_collect_alfamart.log","$MAIL\_collect_alfamidi.log"); Kind="b2b" }
-    @{ Group="B2B";  Name="Verify (AM)";    Task="B2B_Verify_0710";                   Log=@("$MAIL\_verify_alfamart.log","$MAIL\_verify_alfamidi.log");   Kind="b2b" }
     # There are no evening B2B rows: the user wants one pass a day (09:00) for
     # both brands. B2B_Fire_Evening / _Verify_Evening / _Collect_Evening were
     # unregistered on 2026-09-21. register_b2b_schedule.ps1 -Evening brings them
@@ -141,26 +140,9 @@ $pending = @(
     @{ What="IDM  Daily Sell Out";    Path="$SOM\Data\Report\Sales\Minimarket\Indomaret\Daily Sell Out";   Filter="*.zip"  }
     @{ What="IDM  Sell Out (zip)";    Path="$SOM\Data\Report\Sales\Minimarket\Indomaret\Sell Out";         Filter="*.zip"  }
 )
-# The verify pass runs inside the portal's 1-hour cooldown, so its wording tells
-# us whether the preceding fire actually registered:
-#   "Sudah diajukan dalam 1 jam terakhir" -> the fire registered (good)
-#   "akan dikirim melalui email"          -> the fire was MISSED, verify queued it
-foreach ($b in @("alfamart","alfamidi")) {
-    $vlog = "$MAIL\_verify_$b.log"
-    if (-not (Test-Path $vlog)) { continue }
-    $txt       = Get-Content $vlog -Raw
-    $confirmed = ([regex]::Matches($txt, "Sudah diajukan dalam 1 jam terakhir")).Count
-    $missed    = ([regex]::Matches($txt, "akan dikirim melalui email")).Count
-    if ($confirmed -or $missed) {
-        if (-not $shownVerifyHeader) {
-            Write-Host "  Verify pass (did the fire register?):" -ForegroundColor Yellow
-            $shownVerifyHeader = $true
-        }
-        $colour = if ($missed -gt 0) { "Red" } else { "Green" }
-        Write-Host ("   {0,-9} {1,3} confirmed queued, {2,3} were missed and re-queued" -f $b, $confirmed, $missed) -ForegroundColor $colour
-    }
-}
-if ($shownVerifyHeader) { Write-Host "" }
+# No "verify pass" section any more: the laptop's _verify_*.log only described
+# the retired laptop fire. The cloud fire verifies itself (every request is
+# clicked twice) and reports it in the GitHub run summary.
 
 # Since 2026-09-24 Alfamart/Alfamidi sell out is requested and collected in the
 # cloud (GitHub som-minimarket-automation) and lands in the DRAFT bucket path,
