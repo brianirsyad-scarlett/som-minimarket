@@ -1,0 +1,54 @@
+name: Indomaret Sell Out by Branch + by Store (draft)
+
+# Indomaret publishes these itself - no request/email step like Alfamart and
+# Alfamidi. The newest few of each are downloaded and any not already in the
+# draft bucket are uploaded, so a missed day fills itself in.
+#   report 2 = Daily Selling Out Performance by Branch and Product -> sell_out_branch
+#   report 3 = Daily Selling Out & Stock by Store and Product       -> sell_out_store
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 19 * * *"   # 02:30 WIB
+
+concurrency:
+  group: indomaret-daily
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  indomaret-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # ONE run for both types, so they share one login: two logins inside the
+      # same 30-second TOTP window can be refused as a reused code.
+      - name: Download by-branch (2) and by-store (3)
+        env:
+          INDOMARET_EMAIL: ${{ secrets.INDOMARET_EMAIL }}
+          INDOMARET_PASSWORD: ${{ secrets.INDOMARET_PASSWORD }}
+          INDOMARET_TOTP_SECRET: ${{ secrets.INDOMARET_TOTP_SECRET }}
+        run: python -u sources/indomaret_daily_reports.py --report 2,3 --out out --look-back 5
+
+      - name: Write GCS credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      - name: Upload by-branch
+        run: python gcs_upload.py --chain indomaret --report sell_out_branch --src "out/Sell Out" --skip-existing --require-files
+
+      - name: Upload by-store
+        run: python gcs_upload.py --chain indomaret --report sell_out_store --src "out/Daily Sell Out" --skip-existing --require-files

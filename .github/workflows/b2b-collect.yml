@@ -1,0 +1,63 @@
+name: SAT + MIDI Sell Out - collect (draft)
+
+# Power Automate turns every report email into an issue titled "B2B|<brand>|...".
+# This drains those issues: download each link, upload it to the draft bucket,
+# close the issue. Issues cost no Actions minutes, so a day's ~120-250 emails
+# become 3 short runs instead of one run per email.
+#
+# The emails land roughly 10-65 min after the 09:00 fire, so 11:00 should
+# catch everything; 12:00 and 13:00 are backstops. The 13:00 slot also FAILS
+# if a brand had no email at all today - a broken flow must not look like a
+# quiet mailbox.
+on:
+  workflow_dispatch:
+    inputs:
+      expect_today:
+        description: "Fail if a brand had no report email today"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 4 * * *"     # 11:00 WIB
+    - cron: "0 5 * * *"     # 12:00 WIB
+    - cron: "0 6 * * *"     # 13:00 WIB - last slot, --expect-today
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: b2b-collect
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      - name: Collect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=()
+          [ "${{ github.event.schedule }}" = "0 6 * * *" ] && args+=(--expect-today)
+          [ "${{ inputs.expect_today }}" = "true" ] && args+=(--expect-today)
+          python -u collect_b2b.py "${args[@]}"

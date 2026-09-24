@@ -1,0 +1,51 @@
+name: SAT + MIDI Sell Out - request reports (draft)
+
+# Requests the by-store (3 rolling 10-day periods) and by-branch (current +
+# previous month) sell-out exports. The portal emails a link per report later;
+# b2b-collect.yml downloads them.
+#
+# 09:20 WIB, deliberately inside the hour after the laptop's 09:00 fire: the
+# portal refuses to re-queue an export within an hour ("Sudah diajukan dalam 1
+# jam terakhir"), so while the laptop is running this is a harmless no-op that
+# doubles as proof its requests registered - and if the laptop is off, this
+# run does the real requesting.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 2 * * *"    # 09:20 WIB
+
+concurrency:
+  group: b2b-fire
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        brand: [alfamart, alfamidi]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Request ${{ matrix.brand }} reports
+        env:
+          # Same logins as market share (verified identical on the laptop).
+          ALFAMART_B2B_USER: ${{ secrets.ALFAMART_USERNAME }}
+          ALFAMART_B2B_PASS: ${{ secrets.ALFAMART_PASSWORD }}
+          ALFAMART_TOTP_SECRET: ${{ secrets.ALFAMART_TOTP_SECRET }}
+          B2B_MIDI_USER: ${{ secrets.ALFAMIDI_USERNAME }}
+          B2B_MIDI_PASS: ${{ secrets.ALFAMIDI_PASSWORD }}
+        run: python -u fire_b2b.py --brand ${{ matrix.brand }}
