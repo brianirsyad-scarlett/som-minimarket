@@ -7,6 +7,7 @@ Recipients: NOTIFY_TO, comma-separated.
 
     python notify.py unmatched work/unmatched_cities.csv
     python notify.py failure "Sell In pipeline failed" "<details / run URL>"
+    python notify.py test
 """
 
 from __future__ import annotations
@@ -52,6 +53,13 @@ def main(argv) -> int:
                 "Add them to the master file by hand (it is not updated automatically).\n"
                 f"{run_url}")
         send(f"[PCC] {len(rows)} unmatched cit{'y' if len(rows) == 1 else 'ies'}", body, path)
+    elif argv[0] == "test":
+        send("[PCC] Test - unmatched-city alert",
+             "This is a test of the SOM pipeline email alert.\n\n"
+             "When PCC Order Number finds a (Province, City) pair that is not in "
+             "Master_Order Number City.csv, an email like this lists them, with the "
+             "list attached as CSV. Nothing needs to be done for this message.\n"
+             f"{run_url}")
     elif argv[0] == "failure":
         send(f"[SOM pipeline] {argv[1]}", f"{argv[2] if len(argv) > 2 else ''}\n\n{run_url}")
     else:
