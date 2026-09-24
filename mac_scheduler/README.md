@@ -17,7 +17,7 @@ output already exists, so nothing is built twice.
 ```
 brew install gh
 gh auth login
-git clone https://github.com/brianirsyad-scarlett/som-sell-in-report-automation.git ~/som-sell-in-report-automation
+gh repo clone brianirsyad-scarlett/som-sell-in-report-automation ~/som-sell-in-report-automation
 bash ~/som-sell-in-report-automation/mac_scheduler/install.sh
 bash ~/som-scheduler/trigger.sh accurate      # test: starts an Accurate run now
 tail ~/som-scheduler/logs/*.log
