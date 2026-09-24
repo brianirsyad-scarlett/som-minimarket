@@ -1,0 +1,61 @@
+name: Shopee BQ Parquet Pipeline
+
+# The actual Shopee login/scrape stays on the local Mac (shopee_scheduled_export.py,
+# separate from this repo) - moving that to a shared GitHub-hosted runner would make
+# every login look like it's coming from a new random IP each night, which is a much
+# easier pattern for Shopee's anti-bot systems to flag than a stable Mac IP with an
+# already-trusted browser session. The Mac uploads its raw CSVs to GCS every night;
+# this workflow only rebuilds Shopee_bq.parquet from whatever is already in GCS, so
+# that step no longer depends on the Mac, OneDrive, or local power/internet at all.
+on:
+  workflow_dispatch: {}
+  schedule:
+    # WIB (UTC+7). Local run finishes well before either of these; two slots
+    # in case the first one lands while GCS raw upload is still mid-mirror.
+    - cron: "0 18 * * *"   # 01:00 WIB
+    - cron: "0 20 * * *"   # 03:00 WIB
+
+concurrency:
+  group: shopee-bq-pipeline
+  cancel-in-progress: false
+
+env:
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+  PYTHONIOENCODING: utf-8
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+  NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Download raw Shopee CSVs from GCS
+        run: python -u download_raw.py
+
+      - name: Build Shopee_bq.parquet
+        run: python -u build_bq_parquet.py
+
+      - name: Upload Shopee_bq.parquet to GCS
+        run: python gcs_copy.py put work/Shopee_bq.parquet sales_parquet/Shopee_bq.parquet
+
+      - name: Email on failure
+        if: failure()
+        run: python notify.py failure "Shopee BQ pipeline failed" "A step failed - see the run log."
