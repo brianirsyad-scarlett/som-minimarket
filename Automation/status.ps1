@@ -149,19 +149,30 @@ $pending = @(
 # not on this disk - so freshness is read from GCS. As before, only the age of
 # the newest file that actually arrived is honest: "the workflow ran" is not
 # "data arrived" (every row read "ok" on 2026-09-20..22 with nothing delivered).
-Write-Host "  Alfamart/Alfamidi sell-out freshness (cloud draft -> production, gs://bucket_som):" -ForegroundColor Yellow
+# Since 2026-09-24 the cloud also publishes Indomaret and both combined
+# parquets, so every production output the cloud owns is listed here.
+Write-Host "  Minimarket freshness (cloud draft -> production, gs://bucket_som):" -ForegroundColor Yellow
 $gcsCheck = @'
 import sys
 from datetime import datetime, timezone
+D, P = "sales_parquet/raw/minimarket", "sales_sell out_minimarket"
+checks = [(brand, label, prefix) for brand in ("alfamart", "alfamidi") for label, prefix in (
+              ("draft by-branch", f"{D}/{brand}/sell_out_branch/"),
+              ("draft by-store",  f"{D}/{brand}/sell_out_store/"),
+              ("PROD sell_out",   f"{P}/{brand}/sell_out/"),
+              ("PROD daily_qty",  f"{P}/{brand}/daily_sell_out_qty/"))]
+checks += [("indomaret", "draft by-branch", f"{D}/indomaret/sell_out_branch/"),
+           ("indomaret", "draft by-store",  f"{D}/indomaret/sell_out_store/"),
+           ("indomaret", "PROD sell_out",   f"{P}/indomaret/sell_out/"),
+           ("indomaret", "PROD daily",      f"{P}/indomaret/daily_sell_out/")]
+checks += [(c, "draft mkt share", f"{D}/{c}/market_share/") for c in ("alfamart", "alfamidi", "indomaret")]
+checks += [("parquet", "Minimarket_Sales", "sales_parquet/Minimarket_Sales.parquet"),
+           ("parquet", "Market_Share",     "sales_parquet/Minimarket_Market_Share.parquet")]
 try:
     from google.cloud import storage
     b = storage.Client().bucket("bucket_som")
-    for brand in ("alfamart", "alfamidi"):
-        for label, prefix in (("draft by-branch", f"sales_parquet/raw/minimarket/{brand}/sell_out_branch/"),
-                              ("draft by-store",  f"sales_parquet/raw/minimarket/{brand}/sell_out_store/"),
-                              ("PROD sell_out",   f"sales_sell out_minimarket/{brand}/sell_out/"),
-                              ("PROD daily_qty",  f"sales_sell out_minimarket/{brand}/daily_sell_out_qty/")):
-            blobs = list(b.list_blobs(prefix=prefix))
+    for brand, label, prefix in checks:
+            blobs = [x for x in b.list_blobs(prefix=prefix) if "/superseded/" not in x.name]
             if not blobs:
                 print(f"{brand}|{label}|none|")
                 continue
@@ -202,7 +213,7 @@ if ($staleFound) {
 }
 Write-Host ""
 
-Write-Host "  Unconverted raw files (converter scripts are still manual):" -ForegroundColor Yellow
+Write-Host "  Laptop raw files (fallback copy only - the cloud converts and publishes these since 2026-09-24):" -ForegroundColor Yellow
 foreach ($q in $pending) {
     if (Test-Path $q.Path) {
         $n = @(Get-ChildItem $q.Path -Filter $q.Filter -File -ErrorAction SilentlyContinue).Count
