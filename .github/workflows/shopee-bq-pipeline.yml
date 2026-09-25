@@ -9,6 +9,7 @@ name: Shopee BQ Parquet Pipeline
 # that step no longer depends on the Mac, OneDrive, or local power/internet at all.
 on:
   workflow_dispatch: {}
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
   schedule:
     # WIB (UTC+7). Local run finishes well before either of these; two slots
     # in case the first one lands while GCS raw upload is still mid-mirror.
@@ -28,7 +29,26 @@ env:
   NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id' }}
 
 jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh shopee-bq-pipeline.yml 110
+
   build:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
