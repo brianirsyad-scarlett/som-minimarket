@@ -9,10 +9,20 @@ name: Indomaret Sell Out + Stock - download + publish
 # Then publish_indomaret.py moves them to PRODUCTION (by store as-is; by branch
 # as one month-to-date file per open month, swapped for the FULL_MONTH when it
 # arrives) and Minimarket_Sales.parquet is rebuilt.
+# Starts the moment "Market Share - download + publish" finishes (whatever
+# its result): that job also logs into Indomaret, and two logins in one
+# 30-second TOTP window can be refused, so they must not overlap.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Market Share - download + publish"]
+    types: [completed]
   schedule:
-    - cron: "30 19 * * *"   # 02:30 WIB
+    - cron: "30 19 * * *"   # 02:30 WIB - backup only
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: indomaret-daily
@@ -24,7 +34,23 @@ env:
   GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
 
 jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh indomaret-daily.yml day
+
   indomaret-daily:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

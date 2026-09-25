@@ -7,9 +7,13 @@ name: Market Share - download + publish
 # The laptop's own downloads (00:00-01:00 WIB) no longer feed production; this
 # runs later so the two never log into the same portal account at once.
 on:
-  workflow_dispatch:
+  workflow_dispatch:           # on time: Power Automate -> dispatch.yml at 02:05 WIB
   schedule:
-    - cron: "0 19 * * *"    # 02:00 WIB
+    - cron: "0 19 * * *"    # 02:00 WIB - backup only
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: market-share
@@ -21,7 +25,23 @@ env:
   GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
 
 jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh market-share.yml day
+
   market-share:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest     # not macOS: those minutes count 10x in private repos
     timeout-minutes: 90
     strategy:
@@ -72,8 +92,8 @@ jobs:
   # After all three chains, even if one failed: that chain simply keeps its
   # previous months (the draft still holds yesterday's files).
   publish:
-    needs: market-share
-    if: ${{ !cancelled() }}
+    needs: [guard, market-share]
+    if: ${{ !cancelled() && needs.guard.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

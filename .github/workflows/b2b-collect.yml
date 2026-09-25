@@ -18,6 +18,8 @@ on:
         description: "Fail if a brand had no report email today"
         type: boolean
         default: false
+  # On time: Power Automate -> dispatch.yml at 08:05 and 09:05 WIB (the 09:05
+  # one passes expect_today). The crons are backups; GitHub runs them late.
   schedule:
     - cron: "5 1 * * *"     # 08:05 WIB
     - cron: "5 2 * * *"     # 09:05 WIB - last slot, --expect-today
@@ -25,6 +27,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   group: b2b-collect
@@ -36,7 +39,23 @@ env:
   GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
 
 jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh b2b-collect.yml 50
+
   collect:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

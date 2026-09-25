@@ -1,0 +1,46 @@
+name: Dispatch - on-time start from Power Automate
+
+# GitHub's own cron starts runs late - on 2026-09-25 the 02:00/02:30 WIB jobs
+# began 3 h late and the 07:05 request had not started by 08:16. Issue events
+# are delivered in seconds, so Power Automate's "B2B timer" flow creates an
+# issue with the label "run" at each slot:
+#
+#     title  RUN|<workflow file>[|expect_today]     e.g.  RUN|b2b-fire.yml
+#
+# and this starts that workflow at once, then closes the issue. The workflows
+# keep their cron as a backup; their guard job skips a backup run when the
+# on-time run already happened.
+#
+# Only "labeled" is listened to, so the ~130 B2B report-email issues a day
+# (no labels) never start this workflow at all.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    if: github.event.label.name == 'run' && startsWith(github.event.issue.title, 'RUN|')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: ${{ github.event.issue.title }}
+      NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Start the workflow named in the issue
+        run: |
+          IFS='|' read -r _ wf opt <<< "$TITLE"
+          case "$wf" in
+            b2b-fire.yml|b2b-collect.yml|market-share.yml|indomaret-daily.yml) ;;
+            *) gh issue close "$NUMBER" -R "$GITHUB_REPOSITORY" -r "not planned" -c "Unknown workflow \`$wf\` - nothing started."
+               echo "::error::unknown workflow '$wf'"; exit 1 ;;
+          esac
+          args=()
+          [ "$wf" = "b2b-collect.yml" ] && [ "$opt" = "expect_today" ] && args+=(-f expect_today=true)
+          gh workflow run "$wf" -R "$GITHUB_REPOSITORY" --ref main "${args[@]}"
+          echo "started $wf ${args[*]}"
+          gh issue close "$NUMBER" -R "$GITHUB_REPOSITORY" -c "Started \`$wf\` ${args[*]} at $(TZ=Asia/Jakarta date '+%Y-%m-%d %H:%M') WIB."

@@ -37,12 +37,19 @@ Draft layout: `sales_parquet/raw/minimarket/<chain>/<market_share|sell_out_branc
 
 | Time | Workflow |
 |---|---|
-| 02:00 | Market share, all three chains, then **publish** `Minimarket_Market_Share.parquet` |
-| 02:30 | Indomaret sell out by branch + by store, then **publish production** + `Minimarket_Sales.parquet` |
+| 02:05 | Market share, all three chains, then **publish** `Minimarket_Market_Share.parquet` |
+| right after | Indomaret sell out by branch + by store + stock, then **publish production** + `Minimarket_Sales.parquet` |
 | 07:05 | Alfamart + Alfamidi: request sell-out reports - every request clicked twice; the 2nd reply proves the 1st registered |
 | 08:05, 09:05 | Alfamart + Alfamidi: collect the emailed links, then **publish production** + `Minimarket_Sales.parquet` |
 
-GitHub often starts scheduled runs late. None of these depend on an exact minute.
+**On-time start.** GitHub's own cron is often hours late (on 2026-09-25 the
+02:00 jobs began at 04:54 and the 07:05 request had not started by 08:16). So
+the Power Automate flow **"B2B timer"** creates an issue labelled `run` at
+02:05, 07:05, 08:05 and 09:05 WIB, titled `RUN|<workflow file>[|expect_today]`;
+`dispatch.yml` starts that workflow within seconds and closes the issue.
+Indomaret starts the moment market share finishes (`workflow_run`), so the two
+Indomaret logins never overlap. Every cron stays as a **backup**, and
+`guard.sh` makes a backup skip itself when the on-time run already did the work.
 
 ## How the Alfamart / Alfamidi part works
 
