@@ -5,3 +5,5 @@ playwright>=1.45
 google-cloud-storage>=2.16
 pandas>=2.2
 openpyxl>=3.1
+pyarrow>=15
+pyarrow>=17
