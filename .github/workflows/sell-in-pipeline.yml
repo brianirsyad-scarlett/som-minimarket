@@ -20,6 +20,13 @@ on:
         description: "Run even if the inputs are not all from today"
         type: boolean
         default: true
+      final:
+        description: "Last slot of the night: inputs still missing is an error (emailed)"
+        type: boolean
+        default: false
+  # The Power Automate timer dispatches every slot with force=false, and the
+  # 07:00 one with final=true - the same as the crons below would.
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
   schedule:
     # WIB (UTC+7): 01:30, 02:30, 03:30, 05:00, 07:00. The 07:00 slot is the last
     # one: if the inputs are still not in by then, it fails and emails.
@@ -44,7 +51,26 @@ env:
   NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id' }}
 
 jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh sell-in-pipeline.yml 55
+
   sell-in:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -69,6 +95,7 @@ jobs:
           args=()
           [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ] && args+=(--force)
           [ "${{ github.event.schedule }}" = "0 0 * * *" ] && args+=(--final)
+          [ "${{ inputs.final }}" = "true" ] && args+=(--final)
           python -u gate.py "${args[@]}"
 
       # ---------------- Sell In ----------------
