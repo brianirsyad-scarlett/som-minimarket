@@ -61,3 +61,4 @@ token*.json
 *.pickle
 .venv/
 __pycache__/
+graphify-out/
