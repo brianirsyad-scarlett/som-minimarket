@@ -80,13 +80,17 @@ jobs:
             indomaret) python -u sources/indomaret_market_share.py --periode recent --category all --range-period YoY --unit IDR --out out/ms ;;
           esac
 
+      # Still upload when some categories failed: the ones that saved are
+      # today's, and the failed ones keep yesterday's file in the draft.
       - name: Write GCS credentials
+        if: ${{ !cancelled() }}
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
 
       # MTD files keep their name all month and change daily, so overwrite.
       - name: Upload to draft GCS
+        if: ${{ !cancelled() }}
         run: python gcs_upload.py --chain ${{ matrix.chain }} --report market_share --src out/ms --pattern "*.xlsx" --require-files
 
   # After all three chains, even if one failed: that chain simply keeps its

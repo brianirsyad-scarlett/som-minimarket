@@ -430,6 +430,22 @@ def main(argv=None) -> int:
         if len(jobs) > 1:
             time.sleep(1)
 
+    # Power BI answers a cold or busy model with HTTP 500 (2026-09-28: 3 of 12,
+    # each after ~70-130s). A second pass a minute later usually goes through.
+    if failed:
+        log.info("Retrying %d failed report(s) in 60s", len(failed))
+        time.sleep(60)
+        embed_token = get_embed_token(session, access_token)
+        model_id, artifact_id = get_exploration_context(session, embed_token)
+        retry, failed = failed, []
+        for per, cat in retry:
+            try:
+                saved.append(download_one(session, embed_token, per, cat, args.range_period,
+                                           args.unit, args.brand, model_id, artifact_id, out_dir))
+            except Exception as exc:
+                log.error("FAILED again %s / %s: %s", per, cat, exc)
+                failed.append((per, cat))
+
     log.info("Done. %d saved, %d failed. Folder: %s", len(saved), len(failed), out_dir)
     return 1 if failed or not saved else 0
 
