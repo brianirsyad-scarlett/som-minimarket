@@ -171,6 +171,19 @@ def excel_round_trip(df: pd.DataFrame) -> pd.DataFrame:
     return pd.read_excel(buf, sheet_name=0, header=0)
 
 
+def to_fraction(df: pd.DataFrame, chain: str) -> pd.DataFrame:
+    """History stores market share as a fraction (0.269, a category sums to ~1).
+    Since about 2026-08 the Alfamart/Alfamidi portals send percent (26.9, sums to
+    ~100), which made those months x100 and Indomaret look tiny beside them.
+    Scale any month+category that sums past 5 back to a fraction."""
+    ms = pd.to_numeric(df["Market Share"], errors="coerce")
+    tot = ms.groupby([df["Date"], df["Category"]]).transform("sum")
+    pct = tot > 5
+    if pct.any():
+        print(f"  {chain}: {int(pct.sum())} rows arrived as percent - divided by 100")
+    return df.assign(**{"Market Share": (ms.where(~pct, ms / 100)).round(6)})
+
+
 def build_market_share(bucket, dry: bool) -> None:
     print("--- Minimarket_Market_Share.parquet (history kept, draft months rebuilt) ---")
     fresh = []
@@ -194,6 +207,7 @@ def build_market_share(bucket, dry: bool) -> None:
             print(f"  {chain}: no raw files in the draft - keeping its published months")
             continue
         df = excel_round_trip(pd.concat(rows, ignore_index=True))
+        df = to_fraction(df, chain)
         df["Account"] = account
         fresh.append(df)
         print(f"  {chain}: {len(df):,} rows rebuilt for {sorted(df['Date'].map(month_key).unique())}")
