@@ -1,7 +1,7 @@
 """Download every shop's raw Shopee CSV files from GCS into work/inputs/<Shopee Star|Shopee Mall>/.
 
 The Mac pipeline (shopee_scheduled_export.py) mirrors its local Shopee Star /
-Shopee Mall CSV folders into gs://bucket_som/sales_parquet/raw/ecommerce/shopee/<shop>/
+Shopee Mall CSV folders into gs://bucket_som/sales_parquet/raw/online/shopee/<shop>/
 every night after login+download. This script is this repo's equivalent of
 reading those OneDrive folders directly, so the BQ parquet rebuild never
 needs OneDrive or the Mac to be reachable - only whatever is already in GCS.

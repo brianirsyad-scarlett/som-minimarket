@@ -74,7 +74,7 @@ jobs:
         run: python -u build_bq_parquet.py
 
       - name: Upload Shopee_bq.parquet to GCS
-        run: python gcs_copy.py put work/Shopee_bq.parquet sales_parquet/Shopee_bq.parquet
+        run: python gcs_copy.py put work/Shopee_bq.parquet sales_parquet/raw/online/shopee/Shopee_bq.parquet
 
       - name: Email on failure
         if: failure()

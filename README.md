@@ -16,12 +16,12 @@ runner. Every night that script:
    shops
 2. Converts them to CSV
 3. Mirrors the raw `.xlsx`/`.csv` files to
-   `gs://bucket_som/sales_parquet/raw/ecommerce/shopee/<shop>/`
+   `gs://bucket_som/sales_parquet/raw/online/shopee/<shop>/`
 
 This repo picks up from step 3: it downloads whatever CSVs are currently in
 that GCS prefix, rebuilds `Shopee_bq.parquet` with the same cleaning logic
 the local pipeline uses, and uploads it to
-`gs://bucket_som/sales_parquet/Shopee_bq.parquet`. Because it always rebuilds
+`gs://bucket_som/sales_parquet/raw/online/shopee/Shopee_bq.parquet`. Because it always rebuilds
 from GCS (not from OneDrive), it keeps working even on a night the Mac is
 off - it just rebuilds from the most recent raw data that made it to GCS.
 

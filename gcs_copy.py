@@ -1,8 +1,8 @@
 """Tiny GCS copy helper for the workflow.
 
     python gcs_copy.py get "sales_parquet/x.csv" work/x.csv
-    python gcs_copy.py get "sales_parquet/raw/ecommerce/shopee/scarlett_whitening/" work/inputs/Shopee\\ Star/
-    python gcs_copy.py put work/Shopee_bq.parquet "sales_parquet/Shopee_bq.parquet"
+    python gcs_copy.py get "sales_parquet/raw/online/shopee/scarlett_whitening/" work/inputs/Shopee\\ Star/
+    python gcs_copy.py put work/Shopee_bq.parquet "sales_parquet/raw/online/shopee/Shopee_bq.parquet"
 """
 
 import sys
