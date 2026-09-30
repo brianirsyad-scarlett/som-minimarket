@@ -197,7 +197,9 @@ def process_files(folder_path, account_name):
                         return "BODY LOTION"
                     elif "B.SRM" in p:
                         return "BODY SERUM"
-                    elif "EDP" in p or "EXT" in p:
+                    elif "EDP" in p or "EXT" in p or "XDP" in p:
+                        # XDP (SCARLETT XDP SAFA ATHER 30ML, Alfamidi since 2026-03)
+                        # has neither EDP nor EXT; it was silently dropped as uncategorised.
                         return "WOMEN PARFUME & EDT"
                     elif "SUNSCR" in p:
                         return "SUNSCREEN"
