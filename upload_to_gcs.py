@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Upload this run's outputs to GCS: the two raw Odoo exports, the rebuilt
-quarter report, and the rebuilt all-time master report.
+"""Upload this run's outputs to GCS: the two raw Odoo exports and the rebuilt
+quarter report for BOTH the previous and the current quarter, and the rebuilt all-time master report.
 
 Uploads explicit filenames rather than every *.xlsx in the directory, since
 the working directory also holds downloaded reference/prior-quarter files
@@ -19,21 +19,27 @@ SEQ_BASE_YEAR = 2026
 SEQ_BASE_NUMBER = 13
 
 
-def current_quarter_prefix():
+def quarter_prefixes():
+    """Previous quarter first, then the current one (both are rebuilt each run)."""
     today = datetime.now()
     year, quarter = today.year, (today.month - 1) // 3 + 1
-    seq = SEQ_BASE_NUMBER + (year - SEQ_BASE_YEAR) * 4 + (quarter - 1)
-    return f"{seq}. {year} Q{quarter}"
+    prev_year, prev_quarter = (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+    prefixes = []
+    for y, q in ((prev_year, prev_quarter), (year, quarter)):
+        seq = SEQ_BASE_NUMBER + (y - SEQ_BASE_YEAR) * 4 + (q - 1)
+        prefixes.append(f"{seq}. {y} Q{q}")
+    return prefixes
 
 
 def main():
-    prefix = current_quarter_prefix()
-    filenames = [
-        f"{prefix} Sales Order.xlsx",
-        f"{prefix} Sales Analysis.xlsx",
-        f"{prefix} Odoo Report.xlsx",
-        "Odoo Report.xlsx",
-    ]
+    filenames = []
+    for prefix in quarter_prefixes():
+        filenames += [
+            f"{prefix} Sales Order.xlsx",
+            f"{prefix} Sales Analysis.xlsx",
+            f"{prefix} Odoo Report.xlsx",
+        ]
+    filenames.append("Odoo Report.xlsx")
 
     client = storage.Client()
     bucket = client.bucket(BUCKET)

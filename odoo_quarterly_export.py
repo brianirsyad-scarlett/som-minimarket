@@ -382,6 +382,7 @@ def main():
     parser.add_argument(
         "--include-previous",
         action="store_true",
+        default=True,  # always two quarters; kept as a flag for old callers
         help="Also refresh the quarter before the target one, so a quarter that "
         "just closed gets a final export.",
     )
@@ -390,12 +391,13 @@ def main():
         default=BASE_DIR,
         help="Directory to write the two xlsx files into.",
     )
+    parser.add_argument("--current-only", action="store_true", help="Skip the previous quarter (rare).")
     parser.add_argument("--skip-orders", action="store_true", help="Only export Sales Analysis.")
     parser.add_argument("--skip-analysis", action="store_true", help="Only export Sales Orders.")
     args = parser.parse_args()
 
     targets = [parse_quarter(args.quarter) if args.quarter else current_quarter()]
-    if args.include_previous:
+    if args.include_previous and not args.current_only:
         targets.insert(0, previous_quarter(*targets[0]))
 
     env = load_env()

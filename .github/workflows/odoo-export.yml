@@ -67,10 +67,15 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
         run: python download_from_gcs.py
 
-      - name: Run Odoo quarterly export
-        run: python odoo_quarterly_export.py
+      # Always two quarters: the one just closed gets a final export while the
+      # new one is still (nearly) empty, and late edits to the previous quarter land.
+      - name: Run Odoo quarterly export (previous + current quarter)
+        run: python odoo_quarterly_export.py --include-previous
 
-      - name: Build quarter Odoo Report
+      - name: Build previous quarter Odoo Report
+        run: python build_odoo_report.py --quarter previous --replace-production
+
+      - name: Build current quarter Odoo Report
         run: python build_odoo_report.py --replace-production
 
       - name: Check customers against Master Data Customer Odoo (email if unmatched)

@@ -4,8 +4,8 @@ build_master_report.py need, into this directory, before running them.
 
 The prior-quarter list is computed from the calendar date (see
 quarter_files.py) rather than hardcoded, so nothing here needs editing when
-a new quarter starts - the current quarter itself is excluded, since
-build_odoo_report.py builds that one fresh in the same run.
+a new quarter starts - the current and previous quarters are excluded, since
+build_odoo_report.py rebuilds both fresh in the same run.
 """
 import os
 
@@ -22,10 +22,13 @@ REFERENCE_FILES = [
 
 
 def prior_quarter_sources():
+    # The current AND previous quarter are both rebuilt fresh in the same run
+    # (odoo_quarterly_export.py --include-previous), so only older ones come from GCS.
     year, quarter = current_quarter()
-    quarter -= 1
-    if quarter == 0:
-        quarter, year = 4, year - 1
+    for _ in range(2):
+        quarter -= 1
+        if quarter == 0:
+            quarter, year = 4, year - 1
     all_but_current = master_source_files(end_year=year, end_quarter=quarter)
     return [f"sales_parquet/raw/primary/odoo/{name}" for name in all_but_current]
 

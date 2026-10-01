@@ -93,7 +93,8 @@ def unnest_sales_analysis(path):
                     record[metric] = pd.to_numeric(value, errors="coerce") or 0
                 rows.append(record)
 
-    result = pd.DataFrame(rows)
+    # An empty quarter (just started, no orders yet) still needs the full column set.
+    result = pd.DataFrame(rows, columns=LEVEL_COLS + METRIC_COLS)
     result["CreatedOn"] = pd.to_datetime(result["CreatedOn"], format="%d %b %Y", errors="coerce")
     return result
 
@@ -222,6 +223,9 @@ def current_quarter():
 
 
 def parse_quarter(text):
+    if text.strip().lower() == "previous":
+        year, quarter = current_quarter()
+        return (year - 1, 4) if quarter == 1 else (year, quarter - 1)
     m = re.fullmatch(r"(\d{4})[-\s]?[Qq]([1-4])", text.strip())
     if not m:
         sys.exit(f"Bad --quarter '{text}', expected e.g. 2026Q3")
