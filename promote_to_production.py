@@ -34,6 +34,10 @@ PROMOTIONS = {
     "sales_parquet/raw/primary/pcc/PCC_Order_Number.parquet": "sales_parquet/PCC_Order_Number.parquet",
 }
 BACKUP_ROOT = "sales_parquet/backup"
+# The pipeline promotes several times a day and each backup is ~2 GB, so: back the
+# production files up at most once per BACKUP_EVERY, and delete backups older than KEEP.
+BACKUP_EVERY = dt.timedelta(hours=20)
+KEEP = dt.timedelta(days=3)
 
 # Columns a promotion is allowed to add. The GitHub Anchanto.parquet carries the
 # raw Dispatch Date (Sell In dates a sale by it, else CreatedOn), which the
@@ -61,6 +65,20 @@ def copy(bucket, src, dst_key: str) -> None:
     token, _, _ = dst.rewrite(src)
     while token is not None:
         token, _, _ = dst.rewrite(src, token=token)
+
+
+def backup_folders(bucket) -> list[tuple[dt.datetime, str]]:
+    """(timestamp, prefix) of every sales_parquet/backup/<YYYYmmdd-HHMM>/ folder."""
+    it = bucket.list_blobs(prefix=f"{BACKUP_ROOT}/", delimiter="/")
+    list(it)  # the folder prefixes are filled in once the listing is consumed
+    out = []
+    for prefix in it.prefixes:
+        name = prefix.rstrip("/").rsplit("/", 1)[-1]
+        try:
+            out.append((dt.datetime.strptime(name, "%Y%m%d-%H%M").replace(tzinfo=WIB), prefix))
+        except ValueError:
+            continue  # not one of ours - never touch it
+    return out
 
 
 def main(argv=None) -> int:
@@ -106,13 +124,26 @@ def main(argv=None) -> int:
         return 0
 
     print()
+    folders = backup_folders(bucket)
+    latest = max((t for t, _ in folders), default=None)
+    do_backup = latest is None or dt.datetime.now(WIB) - latest >= BACKUP_EVERY
+    print(f"backup: {'taking one' if do_backup else f'skipped - latest is from {latest:%Y-%m-%d %H:%M} WIB'}")
     for src, dst, dst_key in plan:
-        if dst is not None:
+        if dst is not None and do_backup:
             backup_key = f"{BACKUP_ROOT}/{stamp}/{dst_key.rsplit('/', 1)[-1]}"
             copy(bucket, dst, backup_key)
             print(f"backed up {dst_key} -> {backup_key}")
         copy(bucket, src, dst_key)
         print(f"copied    {src.name} -> {dst_key}")
+
+    # prune old backups (only folders named like a timestamp, and always keep the newest one)
+    cutoff = dt.datetime.now(WIB) - KEEP
+    newest = max((t for t, _ in backup_folders(bucket)), default=None)
+    for t, prefix in backup_folders(bucket):
+        if t < cutoff and t != newest:
+            for blob in bucket.list_blobs(prefix=prefix):
+                blob.delete()
+            print(f"pruned    {prefix} ({t:%Y-%m-%d %H:%M})")
     return 0
 
 

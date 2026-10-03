@@ -48,7 +48,7 @@ env:
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
   SMTP_USER: ${{ secrets.SMTP_USER }}
   SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
-  NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id' }}
+  NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@lmbg.co.id' }}
 
 jobs:
   # Backup (cron) runs skip themselves when the on-time run started by

@@ -19,7 +19,7 @@ import sys
 from email.message import EmailMessage
 from pathlib import Path
 
-DEFAULT_TO = "brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id"
+DEFAULT_TO = "brian.rinaldy@lmbg.co.id"
 
 
 def send(subject: str, body: str, attachment: Path | None = None) -> None:
