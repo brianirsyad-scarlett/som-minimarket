@@ -1,9 +1,10 @@
 name: Sell In + PCC Pipeline
 
-# Runs after the Odoo, Anchanto and Accurate pipelines (separate repos). GitHub
-# starts scheduled runs late, so instead of guessing one start time this is
-# scheduled several times a night and gate.py only lets it through once all
-# three inputs in GCS are from today - and only once per day.
+# Runs after the Odoo (hourly), Anchanto (every 6 h) and Accurate (daily) pipelines
+# (separate repos). GitHub starts scheduled runs late, so instead of guessing one
+# start time this is scheduled after each Anchanto run and gate.py only lets it
+# through once neither Odoo nor Anchanto is still running, every input is recent,
+# and something is newer than the last Primary_Sales build.
 on:
   workflow_dispatch:
     inputs:
@@ -28,12 +29,12 @@ on:
   # 07:00 one with final=true - the same as the crons below would.
   # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
   schedule:
-    # WIB (UTC+7): 01:30, 02:30, 03:30, 05:00, 07:00. The 07:00 slot is the last
-    # one: if the inputs are still not in by then, it fails and emails.
-    - cron: "30 18 * * *"
-    - cron: "30 19 * * *"
-    - cron: "30 20 * * *"
-    - cron: "0 22 * * *"
+    # WIB (UTC+7): 00:55, 06:55, 12:55, 18:55 - 25 min after each Anchanto run
+    # starts (it takes ~22 min). If Anchanto or Odoo is still running the gate
+    # waits and the Power Automate slots / next slot pick it up.
+    - cron: "55 5,11,17,23 * * *"
+    # 07:00 WIB: the last check of the morning - an input that is still too old
+    # fails the run, which emails.
     - cron: "0 0 * * *"
 
 concurrency:
@@ -89,8 +90,10 @@ jobs:
           ${{ secrets.GCP_SA_KEY }}
           EOF
 
-      - name: Gate - are today's Odoo, Anchanto and Accurate in?
+      - name: Gate - are Odoo and Anchanto done and something new to build?
         id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           args=()
           [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ] && args+=(--force)
