@@ -167,17 +167,6 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: python -u promote_to_production.py --apply
 
-      - name: Keep workbooks and unmatched list as artifact
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sell-in-pcc-${{ github.run_id }}
-          path: |
-            work/output/*/*.xlsx
-            work/pcc/unmatched_cities.csv
-            work/run.log
-          retention-days: 14
-
       - name: Email on failure
         if: failure()
         run: python notify.py failure "Sell In + PCC pipeline failed" "A step failed - see the run log."
