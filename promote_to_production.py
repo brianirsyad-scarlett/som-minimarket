@@ -37,9 +37,10 @@ BACKUP_ROOT = "sales_parquet/backup"
 
 # Columns a promotion is allowed to add. The GitHub Anchanto.parquet carries the
 # raw Dispatch Date (Sell In dates a sale by it, else CreatedOn), which the
-# local one lacks. Any other added or dropped column blocks --apply.
+# local one lacks, and the raw Delivery Date (delivered orders only, used by
+# anchanto_report_v2 in BigQuery). Any other added or dropped column blocks --apply.
 EXPECTED_NEW_COLUMNS = {
-    "sales_parquet/Anchanto.parquet": {"Dispatch Date"},
+    "sales_parquet/Anchanto.parquet": {"Dispatch Date", "Delivery Date"},
 }
 
 
