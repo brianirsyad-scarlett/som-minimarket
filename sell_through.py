@@ -39,7 +39,7 @@ BACKUP_PREFIX = "sales_parquet/backup_small/Distributor_Sales-"   # one small fi
 KEEP_BACKUPS = 10
 
 MIN_ROWS_VS_PRODUCTION = 0.90   # refuse a publish that would shrink the table by more than 10%
-MIN_DATE_FILLED = 0.99          # share of rows with a parseable Date
+MIN_DATE_FILLED = 0.95          # share of rows with a parseable Date (~1% are empty Bali Nusra rows with Total 0, as on the laptop)
 
 
 # --------------------------------------------------------------------------- #
