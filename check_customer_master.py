@@ -31,7 +31,7 @@ from pathlib import Path
 import pandas as pd
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_TO = "brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id"
+DEFAULT_TO = "brian.rinaldy@lmbg.co.id"
 BUCKET = "bucket_som"
 STATE_BLOB = "sales_parquet/raw/primary/odoo/_checks/customer_master_alert.json"
 LOCAL_GCP_KEY = r"D:\SCARLETT_512\SCARLETT-329\SOM\Data\Sent Email\sales-som datawarehouse 490008.json"
