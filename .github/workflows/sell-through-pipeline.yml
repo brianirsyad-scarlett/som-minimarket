@@ -60,4 +60,4 @@ jobs:
 
       - name: Email on failure
         if: failure()
-        run: python notify.py failure "Sell Through pipeline failed" "The compile or its checks failed - see the run log: $RUN_URL"
+        run: python notify.py failure "Sell Through pipeline failed" "The compile or its checks failed - see the run log at $RUN_URL"
