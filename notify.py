@@ -14,7 +14,7 @@ import smtplib
 import sys
 from email.message import EmailMessage
 
-DEFAULT_TO = "brian.rinaldy@scarlett.co.id,brian.rinaldy@lmbg.co.id"
+DEFAULT_TO = "brian.rinaldy@lmbg.co.id"
 
 
 def send(subject: str, body: str) -> None:
