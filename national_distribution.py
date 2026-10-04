@@ -74,8 +74,8 @@ def quarter_name(a: dt.date, b: dt.date) -> str:
 # The Power Query steps
 # --------------------------------------------------------------------------- #
 
-def read_master_raw(path: Path) -> pd.DataFrame:
-    """The "Product" table exactly as in the workbook (No dropped, ItemName trimmed + upper-cased)."""
+def _product_ref(path: Path) -> tuple[str, str, int, int]:
+    """(first column, last column, header row, last row) of the "Product" table."""
     with zipfile.ZipFile(path) as z:
         ref = None
         for n in z.namelist():
@@ -87,12 +87,23 @@ def read_master_raw(path: Path) -> pd.DataFrame:
             raise SystemExit('Master Data Sales.xlsx has no table named "Product"')
     first, last = (int(re.search(r"\d+", p).group()) for p in ref.split(":"))
     c1, c2 = re.findall(r"[A-Z]+", ref.replace("$", ""))
+    return c1, c2, first, last
+
+
+def read_master_raw(path: Path) -> pd.DataFrame:
+    """The "Product" table exactly as in the workbook (No dropped, ItemName trimmed + upper-cased)."""
+    c1, c2, first, last = _product_ref(path)
     m = pd.read_excel(path, sheet_name="Product", header=first - 1, nrows=last - first,
                       usecols=f"{c1}:{c2}", engine="openpyxl")
     m.columns = [str(c).strip() for c in m.columns]
     m = m.drop(columns=["No"])
     m["ItemName"] = m["ItemName"].astype("string").str.strip().str.upper()
     return m
+
+
+def master_next_row(path: Path) -> int:
+    """First free row directly below the Product table - where new rows get pasted."""
+    return _product_ref(path)[3] + 1
 
 
 def load_master(path: Path) -> pd.DataFrame:
@@ -232,43 +243,105 @@ def reconcile(dist: pd.DataFrame, qs: list, built: dict, fetch) -> list[str]:
 
 
 def missing_items(built: dict, master_raw: pd.DataFrame) -> pd.DataFrame:
-    """Items that were sold but have no row in the master (their Brand..Type of Item stay blank)."""
+    """Items that were sold but have no row in the master (their Brand..Type of Item stay blank).
+    product_name = the Product Name to type next to it: taken from the master item with the same letters/digits
+    (only spacing / dashes differ) when there is one, otherwise empty. closest_product is only a hint."""
+    import difflib
     norm = lambda x: re.sub(r"[^A-Z0-9]", "", str(x).upper())
-    keys = {norm(k): k for k in master_raw["ItemName"].dropna()}
+    first_rows = master_raw.dropna(subset=["ItemName"]).drop_duplicates("ItemName").set_index("ItemName")
+    keys = {norm(k): k for k in first_rows.index}
+    products = sorted({str(x).strip().upper() for x in master_raw["Product Name"].dropna() if str(x).strip()})
     sales = pd.concat(built.values(), ignore_index=True)
     un = sales[sales["Brand"].isna()]
+    cols = ["ItemName", "rows", "qty", "areas", "last_date", "looks_like_master_item", "product_name", "closest_product"]
     if not len(un):
-        return pd.DataFrame(columns=["ItemName", "rows", "qty", "areas", "last_date", "looks_like_master_item"])
+        return pd.DataFrame(columns=cols)
     g = (un.groupby("ItemName").agg(rows=("Quantity", "size"), qty=("Quantity", "sum"),
          areas=("Area", lambda s: ", ".join(sorted(set(s.dropna()))[:3])), last_date=("Date", "max"))
          .sort_values("qty", ascending=False).reset_index())
     g["last_date"] = g["last_date"].dt.strftime("%Y-%m-%d")
     g["looks_like_master_item"] = g["ItemName"].map(lambda x: keys.get(norm(x), ""))
-    return g
+    g["product_name"] = g["looks_like_master_item"].map(
+        lambda k: "" if not k or pd.isna(first_rows.at[k, "Product Name"]) else str(first_rows.at[k, "Product Name"]).strip())
+    def closest(row):
+        if row["product_name"]:
+            return ""
+        m = difflib.get_close_matches(str(row["ItemName"]).upper(), products, n=1, cutoff=0.55)
+        return m[0] if m else ""
+    g["closest_product"] = g.apply(closest, axis=1)
+    return g[cols]
+
+
+def paste_rows(missing: pd.DataFrame) -> list[list[str]]:
+    """Columns B..H of the Product table: ItemName, Brand, Category, Sub Category, Variant, Product Name, Type of Item.
+    Only ItemName and Product Name are typed in that sheet; the five others are XLOOKUP formulas that get filled down."""
+    return [[r["ItemName"], "", "", "", "", r["product_name"], ""] for r in missing.to_dict("records")]
 
 
 MISSING_STATE = "_state/som-sellthrough/master_missing.sha256"
 
 
-def format_missing_email(missing: pd.DataFrame, run_url: str) -> tuple[str, str]:
+def format_missing_email(missing: pd.DataFrame, run_url: str, next_row: int | None):
+    """(subject, plain text, html, tsv). The first table pastes straight into Master Data Sales.xlsx."""
+    import html as _h
     n = len(missing)
+    r0 = next_row if next_row else None
+    last = r0 + n - 1 if r0 else None
     subject = f"[Sell Through] {n} item{'s' if n != 1 else ''} sold but missing in Master Data Sales"
-    near = int((missing["looks_like_master_item"] != "").sum())
-    lines = [f"{n} item(s) in the Sell Through workbooks have no row in the Product table of Master Data Sales.xlsx,",
-             "so Brand / Category / Sub Category / Variant / Product Name / Type of Item are blank for them",
-             f"({int(missing['qty'].sum()):,} qty, {int(missing['rows'].sum()):,} rows in the previous / current / next quarter).",
-             "",
-             f"{near} of them already exist in the master with a slightly different spelling (spacing, dashes): fix the name",
-             "in the regional workbook or add the exact sales spelling to the master. The rest are new items to add.",
-             "", "ItemName (as sold)  |  rows  |  qty  |  areas  |  last date  |  looks like master item", "-" * 100]
-    for r in missing.itertuples(index=False):
-        lines.append(f"{r.ItemName}  |  {r.rows}  |  {r.qty:,}  |  {r.areas}  |  {r.last_date}  |  {r.looks_like_master_item or '-'}")
-    lines += ["", "Add the missing rows to the Product table in Master Data Sales.xlsx (sales_parquet/raw/master data/).",
-              "The next run picks them up automatically. This email is sent once per change of this list.", run_url]
-    return subject, "\n".join(lines)
+    rows = paste_rows(missing)
+    head = ["ItemName", "Brand", "Category", "Sub Category", "Variant", "Product Name", "Type of Item"]
+    known = int((missing["product_name"] != "").sum())
+    at = f"B{r0}" if r0 else "column B, the first empty row below the table"
+    fill = (f"select C{r0 - 1}:F{last} and H{r0 - 1}:H{last} (hold Ctrl for the second range) and press Ctrl+D"
+            if r0 else "fill the formulas in Brand, Category, Sub Category, Variant and Type of Item down from the row above")
+    steps = [f"1. Copy the rows of table 1 (without the header) and paste them at {at} of the sheet 'Product' - the first empty row below the table.",
+             "   Excel extends the table by itself.",
+             f"2. Fill the five formula columns down: {fill}.",
+             f"3. Yellow cells in 'Product Name' still need a value: {n - known} new item(s). Type the Product Name they belong to"
+             " (an existing one, so the lookups find Brand ... Type of Item). A closest guess is in table 2.",
+             f"   {known} item(s) already exist in the master with another spelling (spacing / dashes); their Product Name is filled in - please check."]
+    tsv = "\n".join("\t".join(r) for r in rows)
+    text = "\n".join([f"{n} item(s) sold in the Sell Through workbooks have no row in the Product table of Master Data Sales.xlsx, so their",
+                      f"Brand / Category / Sub Category / Variant / Product Name / Type of Item are blank ({int(missing['qty'].sum()):,} qty, "
+                      f"{int(missing['rows'].sum()):,} rows in the previous / current / next quarter).", "", "HOW TO ADD THEM"] + steps +
+                     ["", "-- TABLE 1: PASTE (tab separated: " + " | ".join(head) + ") --", tsv, "", "-- TABLE 2: CONTEXT --"] +
+                     [f"{r.ItemName} | {r.rows} rows | {r.qty:,} qty | {r.areas} | last {r.last_date}"
+                      + (f" | same as master item: {r.looks_like_master_item}" if r.looks_like_master_item else
+                         (f" | closest product: {r.closest_product}" if r.closest_product else ""))
+                      for r in missing.itertuples(index=False)] + ["", run_url])
+    font = "font-family:Calibri,Arial,sans-serif;font-size:13px"
+    td = f"style='border:1px solid #bbb;padding:3px 8px;{font};white-space:nowrap'"
+    yel = f"bgcolor='#fff2a8' style='border:1px solid #bbb;padding:3px 8px;background:#fff2a8;{font}'"
+    grey = f"bgcolor='#f0f0f0' style='border:1px solid #bbb;padding:3px 8px;background:#f0f0f0;{font}'"
+    th = f"style='border:1px solid #bbb;padding:3px 8px;background:#e8e8e8;{font};text-align:left'"
+    def cell(i, v):
+        if i == 5:
+            return f"<td {yel if not v else td}>{_h.escape(v)}</td>"
+        return f"<td {grey if i in (1, 2, 3, 4, 6) else td}>{_h.escape(v)}</td>"
+    body_rows = "".join("<tr>" + "".join(cell(i, v) for i, v in enumerate(r)) + "</tr>" for r in rows)
+    def ctx(r):
+        hint = r.looks_like_master_item or (("closest: " + r.closest_product) if r.closest_product else "-")
+        return "<tr>" + "".join(f"<td {td}>{_h.escape(str(v))}</td>" for v in
+                                (r.ItemName, r.rows, f"{r.qty:,}", r.areas, r.last_date, hint)) + "</tr>"
+    ctx_head = "".join(f"<th {th}>{c}</th>" for c in ("ItemName (as sold)", "rows", "qty", "areas", "last date", "same as master item / closest product"))
+    html_doc = (
+        f"<html><body style='{font.replace('13px', '14px')}'>"
+        f"<p style='margin:2px 0'>{n} item(s) sold in the Sell Through workbooks have no row in the Product table of Master Data Sales.xlsx, "
+        f"so their Brand ... Type of Item are blank ({int(missing['qty'].sum()):,} qty, {int(missing['rows'].sum()):,} rows).</p>"
+        "<h3 style='margin:14px 0 4px'>How to add them</h3>"
+        + "".join(f"<p style='margin:2px 0;white-space:pre-wrap'>{_h.escape(l)}</p>" for l in steps)
+        + "<h3 style='margin:14px 0 4px'>Table 1 - paste (grey = formula columns, filled down in step 2)</h3>"
+        f"<table cellspacing='0' cellpadding='0' style='border-collapse:collapse'><thead><tr>{''.join(f'<th {th}>{c}</th>' for c in head)}</tr></thead>"
+        f"<tbody>{body_rows}</tbody></table>"
+        "<h3 style='margin:18px 0 4px'>Table 2 - context (not for pasting)</h3>"
+        f"<table cellspacing='0' cellpadding='0' style='border-collapse:collapse'><thead><tr>{ctx_head}</tr></thead>"
+        f"<tbody>{''.join(ctx(r) for r in missing.itertuples(index=False))}</tbody></table>"
+        f"<p style='color:#777;font-size:12px'>{_h.escape(run_url)} - table 1 is also attached as a tab-separated file. "
+        "This email is sent once per change of the list.</p></body></html>")
+    return subject, text, html_doc, tsv
 
 
-def email_missing(bucket, missing: pd.DataFrame, run_url: str, send=None) -> None:
+def email_missing(bucket, missing: pd.DataFrame, run_url: str, send=None, next_row: int | None = None) -> None:
     """Email the missing items once per change of the list (not every 30 minutes). Nothing is written to the bucket
     except a hash of the last list sent."""
     import hashlib
@@ -284,12 +357,12 @@ def email_missing(bucket, missing: pd.DataFrame, run_url: str, send=None) -> Non
         state.upload_from_string(digest)
         print("master check: nothing missing")
         return
-    subject, body = format_missing_email(missing, run_url)
+    subject, text, html_doc, tsv = format_missing_email(missing, run_url, next_row)
     with tempfile.TemporaryDirectory() as tmp:
-        attach = Path(tmp) / "items_missing_in_master.csv"
-        missing.to_csv(attach, index=False)
+        attach = Path(tmp) / "paste_into_Product_table.tsv"
+        attach.write_text(tsv + "\n", encoding="utf-8")
         try:
-            send(subject, body, attach)
+            send(subject, text, attach, html_doc)
         except SystemExit as e:                 # no SMTP secrets yet: stay silent in the log, retry next time
             print(f"master check: {len(missing)} item(s) missing but the email was NOT sent ({e})")
             return
@@ -389,8 +462,13 @@ def run(args) -> int:
             publish(bucket, tmp / name, name, len(tbl), int(tbl["Quantity"].sum()), parquet.updated)
 
         # Items sold but missing in the master -> email (never printed: this repo's logs are public)
+        try:
+            next_row = master_next_row(tmp / "master.xlsx")
+        except Exception as e:                  # the email is still useful without the exact cell
+            print(f"master layout unavailable ({type(e).__name__})")
+            next_row = None
         email_missing(bucket, missing_items(built, read_master_raw(tmp / "master.xlsx")),
-                      os.environ.get("RUN_URL", ""))
+                      os.environ.get("RUN_URL", ""), next_row=next_row)
 
         # Re-read what is now in the bucket and prove it equals the parquet
         def fetch(name: str) -> pd.DataFrame:

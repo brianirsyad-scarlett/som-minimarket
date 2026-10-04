@@ -22,7 +22,7 @@ from pathlib import Path
 DEFAULT_TO = "brian.rinaldy@lmbg.co.id"
 
 
-def send(subject: str, body: str, attachment: Path | None = None) -> None:
+def send(subject: str, body: str, attachment: Path | None = None, html: str | None = None) -> None:
     user, pw = os.environ.get("SMTP_USER"), os.environ.get("SMTP_APP_PASSWORD")
     if not (user and pw):
         raise SystemExit("SMTP_USER / SMTP_APP_PASSWORD not set - cannot send email.")
@@ -30,9 +30,11 @@ def send(subject: str, body: str, attachment: Path | None = None) -> None:
     msg = EmailMessage()
     msg["Subject"], msg["From"], msg["To"] = subject, user, ", ".join(to)
     msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
     if attachment and attachment.exists():
-        msg.add_attachment(attachment.read_bytes(), maintype="text", subtype="csv",
-                           filename=attachment.name)
+        sub = "tab-separated-values" if attachment.suffix.lower() == ".tsv" else "csv"
+        msg.add_attachment(attachment.read_bytes(), maintype="text", subtype=sub, filename=attachment.name)
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=60) as s:
         s.login(user, pw)
         s.send_message(msg)
