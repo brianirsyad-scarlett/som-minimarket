@@ -38,10 +38,19 @@ DRAFT_PREFIX = "sales_parquet/raw/sell_through/cloud/"
 BACKUP_PREFIX = "sales_parquet/raw/sell_through/cloud/backup/"
 KEEP_BACKUPS = 3                      # per workbook; the files are ~12 MB
 
-# (first day, last day) of every quarter workbook this pipeline owns. Older quarters are history
-# and stay on the laptop.
-QUARTERS = [(dt.date(2026, 7, 1), dt.date(2026, 9, 30)),
-            (dt.date(2026, 10, 1), dt.date(2026, 12, 31))]
+def quarters(today: dt.date | None = None) -> list[tuple[dt.date, dt.date]]:
+    """(first day, last day) of the previous, the current and the next calendar quarter, as of today (WIB).
+    A workbook that does not exist yet is created; older quarters are history and stay as they are."""
+    today = today or dt.datetime.now(WIB).date()
+    base = today.year * 4 + (today.month - 1) // 3
+    out = []
+    for i in (base - 1, base, base + 1):
+        year, q = divmod(i, 4)
+        first = dt.date(year, q * 3 + 1, 1)
+        following = dt.date(year, q * 3 + 4, 1) if q < 3 else dt.date(year + 1, 1, 1)
+        out.append((first, following - dt.timedelta(days=1)))
+    return out
+
 
 SHEET = "National Sell Through by Area"
 SOURCE_COLS = ["RSP/Distributor Name", "Date", "CustomerName", "Store Type", "ItemName", "SE", "ASS",
@@ -157,13 +166,13 @@ def write_workbook(table: pd.DataFrame, path: Path) -> None:
     wb.close()
 
 
-def build_all(parquet: Path, master_path: Path, outdir: Path) -> dict[str, pd.DataFrame]:
+def build_all(parquet: Path, master_path: Path, outdir: Path, qs: list) -> dict[str, pd.DataFrame]:
     dist = pd.read_parquet(parquet)
     master = load_master(master_path)
     print(f"distributor rows {len(dist):,} | master items {len(master):,}")
     df = transform(dist)
     built = {}
-    for first, last in QUARTERS:
+    for first, last in qs:
         tbl = quarter_table(df, master, first, last)
         name = quarter_name(first, last)
         write_workbook(tbl, outdir / name)
@@ -181,11 +190,11 @@ def _bucket():
     return storage.Client().bucket(BUCKET)
 
 
-def gate(bucket, force: bool) -> tuple[bool, str]:
+def gate(bucket, force: bool, qs: list) -> tuple[bool, str]:
     parquet, master = bucket.get_blob(PRODUCTION_PARQUET), bucket.get_blob(MASTER)
     if parquet is None or master is None:
         return False, f"missing input: parquet={parquet is not None} master={master is not None}"
-    outs = [bucket.get_blob(OUT_PREFIX + quarter_name(a, b)) for a, b in QUARTERS]
+    outs = [bucket.get_blob(OUT_PREFIX + quarter_name(a, b)) for a, b in qs]
     newest_input = max(parquet.updated, master.updated)
     print(f"inputs: parquet {parquet.updated.astimezone(WIB):%Y-%m-%d %H:%M}, master {master.updated.astimezone(WIB):%Y-%m-%d %H:%M} WIB")
     if force:
@@ -235,7 +244,9 @@ def publish(bucket, local: Path, name: str, rows: int, qty: int, parquet_updated
 
 def run(args) -> int:
     bucket = _bucket()
-    go, why = gate(bucket, args.force)
+    qs = quarters()
+    print("quarters:", ", ".join(f"{a:%Y-%m-%d}..{b:%Y-%m-%d}" for a, b in qs))
+    go, why = gate(bucket, args.force, qs)
     print(f"build: {go} ({why})")
     if not go:
         return 0
@@ -244,9 +255,9 @@ def run(args) -> int:
         tmp = Path(tmp)
         parquet.download_to_filename(str(tmp / "dist.parquet"), timeout=900)
         bucket.blob(MASTER).download_to_filename(str(tmp / "master.xlsx"), timeout=900)
-        built = build_all(tmp / "dist.parquet", tmp / "master.xlsx", tmp)
+        built = build_all(tmp / "dist.parquet", tmp / "master.xlsx", tmp, qs)
         problems = []
-        for first, last in QUARTERS:
+        for first, last in qs:
             name = quarter_name(first, last)
             problems += validate(name, built[name], first, last, bucket.get_blob(OUT_PREFIX + name))
         if problems:
@@ -256,7 +267,7 @@ def run(args) -> int:
             return 1
         if args.no_publish:
             return 0
-        for first, last in QUARTERS:
+        for first, last in qs:
             name = quarter_name(first, last)
             tbl = built[name]
             publish(bucket, tmp / name, name, len(tbl), int(tbl["Quantity"].sum()), parquet.updated)
@@ -276,7 +287,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "build":
         a.outdir.mkdir(parents=True, exist_ok=True)
-        build_all(a.parquet, a.master, a.outdir)
+        build_all(a.parquet, a.master, a.outdir, quarters())
         return 0
     return run(a)
 
