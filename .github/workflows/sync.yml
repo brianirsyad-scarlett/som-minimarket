@@ -13,6 +13,9 @@ name: Sell Through to GCS
 #                       gs://bucket_som/sales_parquet/raw/master data/Master Data Sales.xlsx
 #                       (the previous file is backed up under raw/sell_through/cloud/backup/).
 #
+# Started on time by the Power Automate "GitHub timer" (issue -> dispatch.yml -> this workflow), because
+# GitHub's own cron can start hours late or not at all; the cron below is only the backup.
+#
 # Until the GCP_SA_KEY secret exists the run ends green after the first step, so this can
 # stay enabled while the secrets are being added.
 on:
@@ -31,6 +34,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write     # only used to keep this workflow enabled (last step)
 
 env:
   PYTHONIOENCODING: utf-8
@@ -98,3 +102,12 @@ jobs:
       - name: Build the National Distribution quarter workbooks
         if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
         run: python -u national_distribution.py run ${{ inputs.force && '--force' || '' }}
+
+      # GitHub switches scheduled workflows off in a public repo after 60 days without repository
+      # activity - no matter how often they ran or succeeded. Re-enabling the workflow through the API
+      # is the documented keep-alive: it restarts that clock, so doing it on every run keeps it from expiring.
+      - name: Keep this workflow enabled
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/sync.yml/enable" || echo "::warning::could not re-enable the workflow"

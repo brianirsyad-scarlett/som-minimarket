@@ -73,8 +73,8 @@ def quarter_name(a: dt.date, b: dt.date) -> str:
 # The Power Query steps
 # --------------------------------------------------------------------------- #
 
-def load_master(path: Path) -> pd.DataFrame:
-    """'Master Product' query: table "Product", No dropped, ItemName trimmed + upper-cased, first row per ItemName."""
+def read_master_raw(path: Path) -> pd.DataFrame:
+    """The "Product" table exactly as in the workbook (No dropped, ItemName trimmed + upper-cased)."""
     with zipfile.ZipFile(path) as z:
         ref = None
         for n in z.namelist():
@@ -85,13 +85,18 @@ def load_master(path: Path) -> pd.DataFrame:
         if ref is None:
             raise SystemExit('Master Data Sales.xlsx has no table named "Product"')
     first, last = (int(re.search(r"\d+", p).group()) for p in ref.split(":"))
-    cols = ref.replace("$", "")
-    c1, c2 = re.findall(r"[A-Z]+", cols)
+    c1, c2 = re.findall(r"[A-Z]+", ref.replace("$", ""))
     m = pd.read_excel(path, sheet_name="Product", header=first - 1, nrows=last - first,
                       usecols=f"{c1}:{c2}", engine="openpyxl")
     m.columns = [str(c).strip() for c in m.columns]
     m = m.drop(columns=["No"])
     m["ItemName"] = m["ItemName"].astype("string").str.strip().str.upper()
+    return m
+
+
+def load_master(path: Path) -> pd.DataFrame:
+    """'Master Product' query: first row per ItemName."""
+    m = read_master_raw(path)
     return m.drop_duplicates(subset=["ItemName"], keep="first")[["ItemName"] + MASTER_COLS].reset_index(drop=True)
 
 
@@ -179,6 +184,78 @@ def build_all(parquet: Path, master_path: Path, outdir: Path, qs: list) -> dict[
         built[name] = tbl
         print(f"  {name}: {len(tbl):,} rows, qty {tbl['Quantity'].sum():,}")
     return built
+
+
+# --------------------------------------------------------------------------- #
+# Checks: do the PUBLISHED workbooks equal the parquet?  which master items do not match?
+# --------------------------------------------------------------------------- #
+
+def _normalise(t: pd.DataFrame) -> pd.DataFrame:
+    t = t.dropna(how="all").copy()                      # Excel keeps one blank row for an empty table
+    if not len(t):
+        return t
+    t["Date"] = pd.to_datetime(t["Date"])
+    t["Quantity"] = pd.to_numeric(t["Quantity"]).astype("int64")
+    return t.sort_values(OUT_COLS, na_position="first", kind="stable").reset_index(drop=True)
+
+
+def mismatched_cells(a: pd.DataFrame, b: pd.DataFrame) -> int:
+    a, b = _normalise(a), _normalise(b)
+    if len(a) != len(b):
+        return -1
+    return int(sum(int((~((a[c] == b[c]) | (a[c].isna() & b[c].isna()))).sum()) for c in OUT_COLS))
+
+
+def reconcile(dist: pd.DataFrame, qs: list, built: dict, fetch) -> list[str]:
+    """Raw parquet -> rows and quantity inside each quarter, compared with the workbook that was
+    actually uploaded (fetch(name) returns it as a DataFrame) and with the table we built."""
+    d = pd.to_datetime(dist["Date"], format="%Y-%m-%d", errors="coerce")
+    qty = pd.to_numeric(dist["Total"], errors="coerce").round(0)
+    problems, in_any = [], pd.Series(False, index=dist.index)
+    print(f"{'workbook':50s} {'parquet rows':>13s} {'xlsx rows':>10s} {'parquet qty':>12s} {'xlsx qty':>10s} {'cell diffs':>10s}")
+    for first, last in qs:
+        name = quarter_name(first, last)
+        inq = (d >= pd.Timestamp(first)) & (d <= pd.Timestamp(last))
+        in_any |= inq
+        pub = _normalise(fetch(name))
+        got_rows = len(pub)
+        got_qty = int(pub["Quantity"].sum()) if got_rows else 0
+        diffs = mismatched_cells(built[name], pub)
+        print(f"{name:50s} {int(inq.sum()):>13,} {got_rows:>10,} {int(qty[inq].sum()):>12,} {got_qty:>10,} {diffs:>10}")
+        if got_rows != int(inq.sum()) or got_qty != int(qty[inq].sum()) or diffs != 0:
+            problems.append(f"{name}: published workbook differs from the parquet "
+                            f"(rows {got_rows:,} vs {int(inq.sum()):,}, qty {got_qty:,} vs {int(qty[inq].sum()):,}, cell diffs {diffs})")
+    print(f"parquet rows outside these quarters: {int((d.notna() & ~in_any).sum()):,} (older quarters) | "
+          f"rows with no Date: {int(d.isna().sum()):,} (never in any workbook)")
+    return problems
+
+
+def master_check(built: dict, master_raw: pd.DataFrame) -> pd.DataFrame:
+    """Items sold but missing from the master (their Brand..Type of Item stay blank), and master
+    ItemNames that repeat with conflicting attributes (the first row silently wins)."""
+    norm = lambda x: re.sub(r"[^A-Z0-9]", "", str(x).upper())
+    keys = {norm(k): k for k in master_raw["ItemName"].dropna()}
+    sales = pd.concat(built.values(), ignore_index=True)
+    out = []
+    un = sales[sales["Brand"].isna()]
+    if len(un):
+        g = (un.groupby("ItemName").agg(rows=("Quantity", "size"), qty=("Quantity", "sum"),
+             areas=("Area", lambda s: ", ".join(sorted(set(s.dropna()))[:3])), first_date=("Date", "min"),
+             last_date=("Date", "max")).sort_values("qty", ascending=False).reset_index())
+        g.insert(0, "problem", "NOT IN MASTER")
+        g["detail"] = g["ItemName"].map(lambda x: ("looks like master item: " + keys[norm(x)]) if norm(x) in keys else "")
+        out.append(g)
+    used = set(sales["ItemName"].dropna())
+    rep = master_raw[master_raw.duplicated("ItemName", keep=False) & master_raw["ItemName"].notna()]
+    conf = rep.groupby("ItemName").filter(lambda x: len(x[MASTER_COLS].drop_duplicates()) > 1)
+    if len(conf):
+        rows = []
+        for item, x in conf.groupby("ItemName"):
+            variants = " || ".join(" / ".join(str(v) for v in r) for r in x[MASTER_COLS].drop_duplicates().values.tolist())
+            rows.append({"problem": "DUPLICATE IN MASTER (conflicting; first row wins)", "ItemName": item,
+                         "detail": variants, "in_these_quarters": item in used})
+        out.append(pd.DataFrame(rows))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["problem", "ItemName", "detail"])
 
 
 # --------------------------------------------------------------------------- #
@@ -271,6 +348,37 @@ def run(args) -> int:
             name = quarter_name(first, last)
             tbl = built[name]
             publish(bucket, tmp / name, name, len(tbl), int(tbl["Quantity"].sum()), parquet.updated)
+
+        # Master data that does not match (informational) -> a CSV next to the drafts
+        report = master_check(built, read_master_raw(tmp / "master.xlsx"))
+        sold = report[report["problem"] == "NOT IN MASTER"]
+        print(f"master check: {len(sold)} item(s) sold but not in the master "
+              f"({int(sold['qty'].sum()) if len(sold) else 0:,} qty), "
+              f"{int((report['problem'] != 'NOT IN MASTER').sum())} conflicting master duplicate(s)")
+        if len(report):
+            print(report.head(15).to_string(index=False))
+        bucket.blob(DRAFT_PREFIX + "Master_Data_Check.csv").upload_from_string(
+            report.to_csv(index=False), content_type="text/csv")
+
+        # Re-read what is now in the bucket and prove it equals the parquet
+        def fetch(name: str) -> pd.DataFrame:
+            from openpyxl import load_workbook
+            local = tmp / ("published_" + name)
+            bucket.blob(OUT_PREFIX + name).download_to_filename(str(local), timeout=900)
+            wb = load_workbook(local, read_only=True, data_only=True)
+            rows = wb[SHEET].iter_rows(values_only=True)
+            header = list(next(rows))
+            df = pd.DataFrame(list(rows), columns=header)
+            wb.close()
+            return df
+
+        problems = reconcile(pd.read_parquet(tmp / "dist.parquet"), qs, built, fetch)
+        if problems:
+            print("RECONCILIATION FAILED:")
+            for p in problems:
+                print("  -", p)
+            return 1
+        print("reconciliation OK: every published workbook equals the parquet")
     return 0
 
 

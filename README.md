@@ -33,4 +33,12 @@ While `GCP_SA_KEY` or `MS_TOKEN_CACHE` is missing, every run ends green after th
 The rotating Microsoft refresh token is kept in `gs://bucket_som/_state/som-sellthrough/` between runs.
 After a re-login, update `MS_TOKEN_CACHE`; the next run picks the new value up automatically.
 
+## Starting it every 30 minutes
+
+GitHub's own `cron` is only a backup: it can start hours late or not at all (it did not fire once in the first
+2.5 hours here). The on-time start is the Power Automate flow "GitHub timer", the same one the other `som-*`
+repos use: at each slot it creates an issue titled `RUN|sync.yml`, labels it `run`, and `dispatch.yml` starts
+the workflow and closes the issue. Slots are rows in the flow's Schedule table (every 30 minutes).
+Every run ends by re-enabling the workflow through the API, which stops GitHub's 60-day inactivity shutdown.
+
 Run by hand: Actions -> "Sell Through to GCS" -> Run workflow (tick *force* to rebuild even if nothing changed).
