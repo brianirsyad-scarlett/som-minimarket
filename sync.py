@@ -28,8 +28,18 @@ from google.cloud import storage
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("sync")
 
-TENANT_ID = os.environ["AZURE_TENANT_ID"]
-CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
+
+
+def _need(name: str) -> str:
+    """A secret that exists but is blank (or pasted with quotes) otherwise fails deep inside MSAL."""
+    v = os.environ.get(name, "").strip().strip("\"'").strip()
+    if not v:
+        sys.exit(f"{name} is empty - re-set that repository secret (the bare value, no quotes)")
+    return v
+
+
+TENANT_ID = _need("AZURE_TENANT_ID")
+CLIENT_ID = _need("AZURE_CLIENT_ID")
 SEED = os.environ.get("MS_TOKEN_CACHE", "").strip()   # first run / after a re-login
 SOURCE_PATH = os.environ.get(
     "SOURCE_PATH", "SOM/Sell Through/Sell Through/Raw/Sell_Through_Offline_GT"

@@ -42,12 +42,18 @@ jobs:
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           MS_TOKEN_CACHE: ${{ secrets.MS_TOKEN_CACHE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
-          if [ -n "$GCP_SA_KEY" ] && [ -n "$MS_TOKEN_CACHE" ]; then
+          missing=""
+          for n in GCP_SA_KEY MS_TOKEN_CACHE AZURE_TENANT_ID AZURE_CLIENT_ID; do
+            [ -n "$(printf '%s' "${!n}" | tr -d '[:space:]')" ] || missing="$missing $n"
+          done
+          if [ -z "$missing" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::GCP_SA_KEY and/or MS_TOKEN_CACHE secret is missing - nothing was synced. See README.md."
+            echo "::warning::Secret(s) missing or empty:$missing - nothing was synced. See README.md."
           fi
 
       - uses: actions/checkout@v4
