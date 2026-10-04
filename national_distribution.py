@@ -183,7 +183,7 @@ def build_all(parquet: Path, master_path: Path, outdir: Path, qs: list) -> dict[
         name = quarter_name(first, last)
         write_workbook(tbl, outdir / name)
         built[name] = tbl
-        print(f"  {name}: {len(tbl):,} rows, qty {tbl['Quantity'].sum():,}")
+        print(f"  {name}: {len(tbl):,} rows")
     return built
 
 
