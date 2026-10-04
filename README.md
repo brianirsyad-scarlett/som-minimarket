@@ -27,6 +27,7 @@ While `GCP_SA_KEY` or `MS_TOKEN_CACHE` is missing, every run ends green after th
 |---|---|
 | `GCP_SA_KEY` | Service-account key JSON with write access to `bucket_som` (same value as in `som-sell-in-report-automation`) |
 | `MS_TOKEN_CACHE` | Full text of `token_cache.json` from `login.py` (Microsoft sign-in, `Files.Read`) |
+| `SMTP_USER` / `SMTP_APP_PASSWORD` | Gmail address + app password that send the "items missing in Master Data Sales" email (same values as in `som-sell-in-report-automation`); recipient `NOTIFY_TO` (repo variable, default brian.rinaldy@lmbg.co.id). Optional: without them the email is simply not sent |
 | `AZURE_TENANT_ID` | Azure tenant ID of the app registration used by `login.py` |
 | `AZURE_CLIENT_ID` | Application (client) ID of that app registration |
 

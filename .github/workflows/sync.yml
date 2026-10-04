@@ -101,6 +101,11 @@ jobs:
       # two quarter workbooks (no Excel needed). Skipped when neither input is newer than the workbooks.
       - name: Build the National Distribution quarter workbooks
         if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@lmbg.co.id' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python -u national_distribution.py run ${{ inputs.force && '--force' || '' }}
 
       # GitHub switches scheduled workflows off in a public repo after 60 days without repository

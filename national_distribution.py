@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import sys
 import tempfile
@@ -212,7 +213,7 @@ def reconcile(dist: pd.DataFrame, qs: list, built: dict, fetch) -> list[str]:
     d = pd.to_datetime(dist["Date"], format="%Y-%m-%d", errors="coerce")
     qty = pd.to_numeric(dist["Total"], errors="coerce").round(0)
     problems, in_any = [], pd.Series(False, index=dist.index)
-    print(f"{'workbook':50s} {'parquet rows':>13s} {'xlsx rows':>10s} {'parquet qty':>12s} {'xlsx qty':>10s} {'cell diffs':>10s}")
+    print(f"{'workbook':50s} {'parquet rows':>13s} {'xlsx rows':>10s} {'qty equal':>10s} {'cell diffs':>10s}")
     for first, last in qs:
         name = quarter_name(first, last)
         inq = (d >= pd.Timestamp(first)) & (d <= pd.Timestamp(last))
@@ -221,7 +222,7 @@ def reconcile(dist: pd.DataFrame, qs: list, built: dict, fetch) -> list[str]:
         got_rows = len(pub)
         got_qty = int(pub["Quantity"].sum()) if got_rows else 0
         diffs = mismatched_cells(built[name], pub)
-        print(f"{name:50s} {int(inq.sum()):>13,} {got_rows:>10,} {int(qty[inq].sum()):>12,} {got_qty:>10,} {diffs:>10}")
+        print(f"{name:50s} {int(inq.sum()):>13,} {got_rows:>10,} {str(got_qty == int(qty[inq].sum())):>10s} {diffs:>10}")
         if got_rows != int(inq.sum()) or got_qty != int(qty[inq].sum()) or diffs != 0:
             problems.append(f"{name}: published workbook differs from the parquet "
                             f"(rows {got_rows:,} vs {int(inq.sum()):,}, qty {got_qty:,} vs {int(qty[inq].sum()):,}, cell diffs {diffs})")
@@ -230,32 +231,70 @@ def reconcile(dist: pd.DataFrame, qs: list, built: dict, fetch) -> list[str]:
     return problems
 
 
-def master_check(built: dict, master_raw: pd.DataFrame) -> pd.DataFrame:
-    """Items sold but missing from the master (their Brand..Type of Item stay blank), and master
-    ItemNames that repeat with conflicting attributes (the first row silently wins)."""
+def missing_items(built: dict, master_raw: pd.DataFrame) -> pd.DataFrame:
+    """Items that were sold but have no row in the master (their Brand..Type of Item stay blank)."""
     norm = lambda x: re.sub(r"[^A-Z0-9]", "", str(x).upper())
     keys = {norm(k): k for k in master_raw["ItemName"].dropna()}
     sales = pd.concat(built.values(), ignore_index=True)
-    out = []
     un = sales[sales["Brand"].isna()]
-    if len(un):
-        g = (un.groupby("ItemName").agg(rows=("Quantity", "size"), qty=("Quantity", "sum"),
-             areas=("Area", lambda s: ", ".join(sorted(set(s.dropna()))[:3])), first_date=("Date", "min"),
-             last_date=("Date", "max")).sort_values("qty", ascending=False).reset_index())
-        g.insert(0, "problem", "NOT IN MASTER")
-        g["detail"] = g["ItemName"].map(lambda x: ("looks like master item: " + keys[norm(x)]) if norm(x) in keys else "")
-        out.append(g)
-    used = set(sales["ItemName"].dropna())
-    rep = master_raw[master_raw.duplicated("ItemName", keep=False) & master_raw["ItemName"].notna()]
-    conf = rep.groupby("ItemName").filter(lambda x: len(x[MASTER_COLS].drop_duplicates()) > 1)
-    if len(conf):
-        rows = []
-        for item, x in conf.groupby("ItemName"):
-            variants = " || ".join(" / ".join(str(v) for v in r) for r in x[MASTER_COLS].drop_duplicates().values.tolist())
-            rows.append({"problem": "DUPLICATE IN MASTER (conflicting; first row wins)", "ItemName": item,
-                         "detail": variants, "in_these_quarters": item in used})
-        out.append(pd.DataFrame(rows))
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["problem", "ItemName", "detail"])
+    if not len(un):
+        return pd.DataFrame(columns=["ItemName", "rows", "qty", "areas", "last_date", "looks_like_master_item"])
+    g = (un.groupby("ItemName").agg(rows=("Quantity", "size"), qty=("Quantity", "sum"),
+         areas=("Area", lambda s: ", ".join(sorted(set(s.dropna()))[:3])), last_date=("Date", "max"))
+         .sort_values("qty", ascending=False).reset_index())
+    g["last_date"] = g["last_date"].dt.strftime("%Y-%m-%d")
+    g["looks_like_master_item"] = g["ItemName"].map(lambda x: keys.get(norm(x), ""))
+    return g
+
+
+MISSING_STATE = "_state/som-sellthrough/master_missing.sha256"
+
+
+def format_missing_email(missing: pd.DataFrame, run_url: str) -> tuple[str, str]:
+    n = len(missing)
+    subject = f"[Sell Through] {n} item{'s' if n != 1 else ''} sold but missing in Master Data Sales"
+    near = int((missing["looks_like_master_item"] != "").sum())
+    lines = [f"{n} item(s) in the Sell Through workbooks have no row in the Product table of Master Data Sales.xlsx,",
+             "so Brand / Category / Sub Category / Variant / Product Name / Type of Item are blank for them",
+             f"({int(missing['qty'].sum()):,} qty, {int(missing['rows'].sum()):,} rows in the previous / current / next quarter).",
+             "",
+             f"{near} of them already exist in the master with a slightly different spelling (spacing, dashes): fix the name",
+             "in the regional workbook or add the exact sales spelling to the master. The rest are new items to add.",
+             "", "ItemName (as sold)  |  rows  |  qty  |  areas  |  last date  |  looks like master item", "-" * 100]
+    for r in missing.itertuples(index=False):
+        lines.append(f"{r.ItemName}  |  {r.rows}  |  {r.qty:,}  |  {r.areas}  |  {r.last_date}  |  {r.looks_like_master_item or '-'}")
+    lines += ["", "Add the missing rows to the Product table in Master Data Sales.xlsx (sales_parquet/raw/master data/).",
+              "The next run picks them up automatically. This email is sent once per change of this list.", run_url]
+    return subject, "\n".join(lines)
+
+
+def email_missing(bucket, missing: pd.DataFrame, run_url: str, send=None) -> None:
+    """Email the missing items once per change of the list (not every 30 minutes). Nothing is written to the bucket
+    except a hash of the last list sent."""
+    import hashlib
+    if send is None:
+        from notify import send
+    digest = hashlib.sha256("\n".join(sorted(missing["ItemName"])).encode()).hexdigest() if len(missing) else "none"
+    state = bucket.blob(MISSING_STATE)
+    last = state.download_as_text().strip() if state.exists() else ""
+    if digest == last:
+        print(f"master check: {len(missing)} item(s) missing - same list as the last email, not sent again")
+        return
+    if not len(missing):
+        state.upload_from_string(digest)
+        print("master check: nothing missing")
+        return
+    subject, body = format_missing_email(missing, run_url)
+    with tempfile.TemporaryDirectory() as tmp:
+        attach = Path(tmp) / "items_missing_in_master.csv"
+        missing.to_csv(attach, index=False)
+        try:
+            send(subject, body, attach)
+        except SystemExit as e:                 # no SMTP secrets yet: stay silent in the log, retry next time
+            print(f"master check: {len(missing)} item(s) missing but the email was NOT sent ({e})")
+            return
+    state.upload_from_string(digest)
+    print(f"master check: {len(missing)} item(s) missing - emailed")
 
 
 # --------------------------------------------------------------------------- #
@@ -349,16 +388,9 @@ def run(args) -> int:
             tbl = built[name]
             publish(bucket, tmp / name, name, len(tbl), int(tbl["Quantity"].sum()), parquet.updated)
 
-        # Master data that does not match (informational) -> a CSV next to the drafts
-        report = master_check(built, read_master_raw(tmp / "master.xlsx"))
-        sold = report[report["problem"] == "NOT IN MASTER"]
-        print(f"master check: {len(sold)} item(s) sold but not in the master "
-              f"({int(sold['qty'].sum()) if len(sold) else 0:,} qty), "
-              f"{int((report['problem'] != 'NOT IN MASTER').sum())} conflicting master duplicate(s)")
-        if len(report):
-            print(report.head(15).to_string(index=False))
-        bucket.blob(DRAFT_PREFIX + "Master_Data_Check.csv").upload_from_string(
-            report.to_csv(index=False), content_type="text/csv")
+        # Items sold but missing in the master -> email (never printed: this repo's logs are public)
+        email_missing(bucket, missing_items(built, read_master_raw(tmp / "master.xlsx")),
+                      os.environ.get("RUN_URL", ""))
 
         # Re-read what is now in the bucket and prove it equals the parquet
         def fetch(name: str) -> pd.DataFrame:
