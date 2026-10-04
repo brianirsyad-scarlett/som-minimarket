@@ -1,0 +1,84 @@
+name: Sell Through to GCS
+
+# Every 30 minutes:
+#   1. sync.py          OneDrive -> gs://bucket_som/sales_parquet/raw/sell_through/Sell_Through_Offline_GT/
+#                       (only workbooks OneDrive holds a newer copy of)
+#   2. sell_through.py  compile the ten workbooks -> draft -> validate -> publish
+#                       gs://bucket_som/sales_parquet/Distributor_Sales.parquet
+#                       (the file BigQuery's raw_offline_distributor_sales reads).
+#                       Skipped when no workbook is newer than the last build, and nothing is
+#                       published when the table is identical to production.
+#
+# Until the GCP_SA_KEY secret exists the run ends green after the first step, so this can
+# stay enabled while the secrets are being added.
+on:
+  schedule:
+    - cron: "10,40 * * * *"      # every 30 min (UTC); off the :00/:30 rush, GitHub still may delay it
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if no workbook is newer than the last build"
+        type: boolean
+        default: false
+
+concurrency:
+  group: som-sellthrough
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check secrets are configured
+        id: ready
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          MS_TOKEN_CACHE: ${{ secrets.MS_TOKEN_CACHE }}
+        run: |
+          if [ -n "$GCP_SA_KEY" ] && [ -n "$MS_TOKEN_CACHE" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GCP_SA_KEY and/or MS_TOKEN_CACHE secret is missing - nothing was synced. See README.md."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.ready.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.ready.outputs.ready == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.ready.outputs.ready == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+      - name: OneDrive -> GCS
+        id: sync
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          MS_TOKEN_CACHE: ${{ secrets.MS_TOKEN_CACHE }}
+        run: python -u sync.py
+
+      # Still builds if the sync failed: the laptop's mirror daemon may have uploaded newer files.
+      - name: Compile and publish Distributor_Sales.parquet
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        run: python -u sell_through.py run ${{ inputs.force && '--force' || '' }}
