@@ -145,8 +145,8 @@ def needs_copy(blob, item) -> tuple[bool, str]:
         return False, "unchanged"
     od_modified = datetime.fromisoformat(item["lastModifiedDateTime"].replace("Z", "+00:00"))
     if blob.updated >= od_modified:
-        return False, f"bucket copy is newer ({blob.updated:%H:%M:%S}Z >= OneDrive {od_modified:%H:%M:%S}Z)"
-    return True, f"OneDrive is newer ({od_modified:%H:%M:%S}Z > bucket {blob.updated:%H:%M:%S}Z)"
+        return False, f"bucket copy is newer ({blob.updated:%m-%d %H:%M:%S}Z >= OneDrive {od_modified:%m-%d %H:%M:%S}Z)"
+    return True, f"OneDrive is newer ({od_modified:%m-%d %H:%M:%S}Z > bucket {blob.updated:%m-%d %H:%M:%S}Z)"
 
 
 def main() -> int:

@@ -10,6 +10,14 @@ OneDrive -> GCS -> `Distributor_Sales.parquet`, every 30 minutes on GitHub Actio
    `sales_parquet/backup_small/` first (30 kept), and a build that shrinks the table by more than 10%,
    changes its columns, or has too few valid dates is not published. An identical table is not republished.
 
+3. `national_distribution.py` rebuilds the two quarter workbooks
+   `National Distribution Raw_20260701_20260930.xlsx` and `..._20261001_20261231.xlsx` in the same bucket
+   folder from that parquet plus `sales_parquet/raw/master data/Master Data Sales.xlsx` (table `Product`).
+   It is a pandas port of the Power Query inside the laptop's workbooks, checked cell for cell against
+   Excel's own output (189,524 rows, 0 differences). The previous file is backed up to
+   `raw/sell_through/cloud/backup/` (3 kept). Add a quarter by adding a date pair to `QUARTERS`.
+   The multi-quarter *Summary* workbook (Data Model, PivotTables, slicers) cannot be refreshed here: it needs desktop Excel.
+
 ## Repository secrets
 
 Settings -> Secrets and variables -> Actions. **This repo is public: never commit a key or token.**

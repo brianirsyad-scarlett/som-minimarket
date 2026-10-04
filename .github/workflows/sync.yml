@@ -8,6 +8,10 @@ name: Sell Through to GCS
 #                       (the file BigQuery's raw_offline_distributor_sales reads).
 #                       Skipped when no workbook is newer than the last build, and nothing is
 #                       published when the table is identical to production.
+#   3. national_distribution.py  rebuild "National Distribution Raw_20260701_20260930.xlsx" and
+#                       "..._20261001_20261231.xlsx" in the same bucket folder from that parquet +
+#                       gs://bucket_som/sales_parquet/raw/master data/Master Data Sales.xlsx
+#                       (the previous file is backed up under raw/sell_through/cloud/backup/).
 #
 # Until the GCP_SA_KEY secret exists the run ends green after the first step, so this can
 # stay enabled while the secrets are being added.
@@ -88,3 +92,9 @@ jobs:
       - name: Compile and publish Distributor_Sales.parquet
         if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
         run: python -u sell_through.py run ${{ inputs.force && '--force' || '' }}
+
+      # Reads the Distributor_Sales.parquet just published + Master Data Sales.xlsx, and rebuilds the
+      # two quarter workbooks (no Excel needed). Skipped when neither input is newer than the workbooks.
+      - name: Build the National Distribution quarter workbooks
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        run: python -u national_distribution.py run ${{ inputs.force && '--force' || '' }}

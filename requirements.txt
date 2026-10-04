@@ -6,3 +6,4 @@ pyarrow==25.0.1
 google-cloud-storage>=2.14
 msal>=1.31
 requests>=2.32
+xlsxwriter>=3.2
