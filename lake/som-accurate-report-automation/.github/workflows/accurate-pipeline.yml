@@ -1,0 +1,90 @@
+name: Accurate Report Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "Months to download: YYYY-MM, prev or current, comma-separated"
+        default: "prev,current"
+        required: true
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
+  schedule:
+    # 00:45 WIB (UTC+7) = 17:45 UTC. GitHub may start scheduled runs late; the
+    # Sell In chain waits for this output instead of assuming the time.
+    - cron: "45 17 * * *"
+
+env:
+  TZ: Asia/Jakarta
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh accurate-pipeline.yml day
+
+  accurate:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Skip if today's run already happened (late GitHub schedule)
+        id: guard
+        if: github.event_name == 'schedule'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+        run: |
+          # The iMac starts this pipeline on time; GitHub's own cron usually arrives
+          # hours later. If today's output (Asia/Jakarta) is already there, stop -
+          # a second build would only re-trigger the downstream Sell In chain.
+          python - <<'EOF'
+          import datetime as dt, os
+          from zoneinfo import ZoneInfo
+          from google.cloud import storage
+          wib = ZoneInfo("Asia/Jakarta")
+          b = storage.Client().bucket("bucket_som").get_blob("sales_parquet/raw/primary/accurate/0. 2025 Accurate.xlsx")
+          done = b is not None and b.updated.astimezone(wib).date() == dt.datetime.now(wib).date()
+          print(f"today's output already built: {done}" + (f" ({b.updated.astimezone(wib):%H:%M} WIB)" if b else ""))
+          print("skip=true" if done else "skip=false", file=open(os.environ["GITHUB_OUTPUT"], "a"))
+          EOF
+
+      - name: Download from Accurate, rebuild Accurate <year>.xlsx and 0. 2025 Accurate.xlsx
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          ACCURATE_EMAIL: ${{ secrets.ACCURATE_EMAIL }}
+          ACCURATE_PASSWORD: ${{ secrets.ACCURATE_PASSWORD }}
+          ACCURATE_DB_NAME: ${{ secrets.ACCURATE_DB_NAME || vars.ACCURATE_DB_NAME || 'Bintang' }}
+        run: |
+          args=()
+          IFS=',' read -ra months <<< "${{ inputs.months || 'prev,current' }}"
+          for m in "${months[@]}"; do args+=(--month "$(echo "$m" | xargs)"); done
+          python -u run_accurate_pipeline.py "${args[@]}"
