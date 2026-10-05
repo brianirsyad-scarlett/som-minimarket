@@ -52,6 +52,19 @@
 /Data/Report/Sales/Minimarket/*/*/*
 !/Data/Report/Sales/Minimarket/*/*/[0-9]_*.py
 
+# --- imac: code + docs copied from the iMac (source/doc extensions only) -----
+!/imac/
+/imac/**
+!/imac/*/
+!/imac/*/*/
+!/imac/DATA_INVENTORY.md
+!/imac/**/*.py
+!/imac/**/*.sh
+!/imac/**/*.ps1
+!/imac/**/*.md
+!/imac/**/*.plist
+!/imac/**/*.template
+
 # --- belt and braces: never, even if a rule above is loosened ---------------
 .env
 *.log
