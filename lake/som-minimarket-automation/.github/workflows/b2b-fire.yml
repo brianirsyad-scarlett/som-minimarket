@@ -1,0 +1,77 @@
+name: SAT + MIDI Sell Out + Stock - request
+
+# Requests the by-store (3 rolling 10-day periods) and by-branch (current +
+# previous month) sell-out exports. The portal emails a link per report;
+# b2b-collect.yml downloads them at 08:05 and 09:05 and publishes production.
+#
+# Verification is built in and costs almost nothing: every request is clicked
+# twice, back to back. The portal refuses to re-queue within an hour, so the
+# second reply ("Sudah diajukan dalam 1 jam terakhir") proves the first click
+# registered. This replaced a separate verify pass 10 minutes later, which
+# spent ~10 billed runner-minutes a day doing nothing but sleep.
+#
+# 07:05, not 07:00: the top of the hour - and 00:00 UTC above all - is GitHub's
+# busiest scheduling minute, when runs are delayed most and can be dropped.
+#
+# This is the ONLY fire. The laptop's B2B tasks were disabled on 2026-09-24.
+on:
+  workflow_dispatch:           # on time: Power Automate -> dispatch.yml at 07:05 WIB
+  schedule:
+    - cron: "5 0 * * *"     # 07:05 WIB - backup only; GitHub cron can be hours late
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: b2b-fire
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh b2b-fire.yml day
+
+  fire:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # One login per chain covers market share and B2B (verified on the laptop).
+      ALFAMART_B2B_USER: ${{ secrets.ALFAMART_USERNAME }}
+      ALFAMART_B2B_PASS: ${{ secrets.ALFAMART_PASSWORD }}
+      ALFAMART_TOTP_SECRET: ${{ secrets.ALFAMART_TOTP_SECRET }}
+      B2B_MIDI_USER: ${{ secrets.ALFAMIDI_USERNAME }}
+      B2B_MIDI_PASS: ${{ secrets.ALFAMIDI_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Fire - Alfamart (each request clicked twice)
+        run: python -u fire_b2b.py --brand alfamart
+
+      # !cancelled(): one brand failing must not stop the other.
+      - name: Fire - Alfamidi (each request clicked twice)
+        if: ${{ !cancelled() }}
+        run: python -u fire_b2b.py --brand alfamidi

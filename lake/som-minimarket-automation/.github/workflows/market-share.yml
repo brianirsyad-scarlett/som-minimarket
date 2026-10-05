@@ -1,0 +1,119 @@
+name: Market Share - download + publish
+
+# SAT / MIDI / IDM market share, prev + current month, every category, into the
+# draft; then the publish job rebuilds those months in
+# sales_parquet/Minimarket_Market_Share.parquet (PRODUCTION) from the draft,
+# keeping every older month (build_parquets.py --market-share).
+# The laptop's own downloads (00:00-01:00 WIB) no longer feed production; this
+# runs later so the two never log into the same portal account at once.
+on:
+  workflow_dispatch:           # on time: Power Automate -> dispatch.yml at 02:05 WIB
+  schedule:
+    - cron: "0 19 * * *"    # 02:00 WIB - backup only
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: market-share
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh market-share.yml day
+
+  market-share:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest     # not macOS: those minutes count 10x in private repos
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false         # one chain failing must not cancel the other two
+      matrix:
+        chain: [alfamart, alfamidi, indomaret]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Install Chromium for Playwright
+        if: matrix.chain != 'indomaret'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Download ${{ matrix.chain }} market share
+        env:
+          ALFAMART_USERNAME: ${{ secrets.ALFAMART_USERNAME }}
+          ALFAMART_PASSWORD: ${{ secrets.ALFAMART_PASSWORD }}
+          ALFAMART_TOTP_SECRET: ${{ secrets.ALFAMART_TOTP_SECRET }}
+          ALFAMIDI_USERNAME: ${{ secrets.ALFAMIDI_USERNAME }}
+          ALFAMIDI_PASSWORD: ${{ secrets.ALFAMIDI_PASSWORD }}
+          INDOMARET_EMAIL: ${{ secrets.INDOMARET_EMAIL }}
+          INDOMARET_PASSWORD: ${{ secrets.INDOMARET_PASSWORD }}
+          INDOMARET_TOTP_SECRET: ${{ secrets.INDOMARET_TOTP_SECRET }}
+        # Same arguments as the laptop's run_daily.ps1 for each chain.
+        run: |
+          case "${{ matrix.chain }}" in
+            alfamart)  python -u sources/alfamart_market_share.py  --periode recent --category all --format MTD --branch NAS --out out/ms ;;
+            alfamidi)  python -u sources/alfamidi_market_share.py  --periode recent --category all --format MTD --area NAS   --out out/ms ;;
+            indomaret) python -u sources/indomaret_market_share.py --periode recent --category all --range-period YoY --unit IDR --out out/ms ;;
+          esac
+
+      # Still upload when some categories failed: the ones that saved are
+      # today's, and the failed ones keep yesterday's file in the draft.
+      - name: Write GCS credentials
+        if: ${{ !cancelled() }}
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      # MTD files keep their name all month and change daily, so overwrite.
+      - name: Upload to draft GCS
+        if: ${{ !cancelled() }}
+        run: python gcs_upload.py --chain ${{ matrix.chain }} --report market_share --src out/ms --pattern "*.xlsx" --require-files
+
+  # After all three chains, even if one failed: that chain simply keeps its
+  # previous months (the draft still holds yesterday's files).
+  publish:
+    needs: [guard, market-share]
+    if: ${{ !cancelled() && needs.guard.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      - name: Publish Minimarket_Market_Share.parquet
+        run: python -u build_parquets.py --market-share

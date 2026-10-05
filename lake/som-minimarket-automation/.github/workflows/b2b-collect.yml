@@ -1,0 +1,100 @@
+name: SAT + MIDI Sell Out - collect + publish
+
+# Power Automate turns every report email into an issue titled "B2B|<brand>|...".
+# This drains those issues: download each link, upload it to the draft bucket,
+# close the issue, then publish to the production sell-out paths
+# (publish_production.py). Issues cost no Actions minutes, so a day's ~120-250 emails
+# become 2 short runs instead of one run per email.
+#
+# The 07:05 fire's emails land roughly 10-65 min later, so 08:05 should catch
+# most and 09:05 is the backstop. The 09:05 slot also FAILS if a brand had no
+# email at all today - a broken flow must not look like a quiet mailbox.
+# (+5 min past the hour for the same reason as the fire: the top of the hour is
+# GitHub's most congested scheduling minute.)
+on:
+  workflow_dispatch:
+    inputs:
+      expect_today:
+        description: "Fail if a brand had no report email today"
+        type: boolean
+        default: false
+  # On time: Power Automate -> dispatch.yml at 08:05 and 09:05 WIB (the 09:05
+  # one passes expect_today). The crons are backups; GitHub runs them late.
+  schedule:
+    - cron: "5 1 * * *"     # 08:05 WIB
+    - cron: "5 2 * * *"     # 09:05 WIB - last slot, --expect-today
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: b2b-collect
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Jakarta
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  # Backup (cron / chained) runs skip themselves when the on-time run from
+  # dispatch.yml already did the work - see guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh b2b-collect.yml 50
+
+  collect:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > gcp_key.json
+
+      - name: Collect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=()
+          [ "${{ github.event.schedule }}" = "5 2 * * *" ] && args+=(--expect-today)
+          [ "${{ inputs.expect_today }}" = "true" ] && args+=(--expect-today)
+          python -u collect_b2b.py "${args[@]}"
+
+      # PRODUCTION. Runs even when collect reported a problem (an expired link,
+      # a missing brand): whatever did reach the draft still gets published,
+      # and the collect step's red status stays visible on its own.
+      - name: Publish to production - Alfamart
+        if: ${{ !cancelled() }}
+        run: python -u publish_production.py --brand alfamart
+
+      - name: Publish to production - Alfamidi
+        if: ${{ !cancelled() }}
+        run: python -u publish_production.py --brand alfamidi
+
+      # sales_parquet/Minimarket_Sales.parquet, rebuilt from production for all
+      # three chains. It refuses to publish if any account-month would be lost.
+      - name: Rebuild Minimarket_Sales.parquet
+        if: ${{ !cancelled() }}
+        run: python -u build_parquets.py --sales

@@ -1,0 +1,8 @@
+# never commit credentials, keys, downloads or logs
+.env
+gcp_key.json
+*.json.key
+out/
+*.log
+__pycache__/
+*.pyc
