@@ -1,0 +1,63 @@
+name: Sell Through Pipeline
+
+# The ten regional "Sell Through" workbooks (distributors / RSP) are edited by hand on
+# the laptop. The laptop's mirror daemon uploads each one to
+#     gs://bucket_som/sales_parquet/raw/sell_through/Sell_Through_Offline_GT/
+# the moment it is saved. This compiles them into Distributor_Sales.parquet
+# (sell_through.py is the cloud copy of the laptop's 1_raw_compiler.py, checked to give
+# an identical table) and publishes it to sales_parquet/Distributor_Sales.parquet, the file
+# BigQuery's raw_offline_distributor_sales reads. The old production file is backed up to
+# sales_parquet/backup_small/ first, and a build that would shrink the table by more than
+# 10% or change its columns is NOT published (the run fails and emails).
+#
+# Every 3 hours; the gate skips the run when no workbook is newer than the last build,
+# so most runs end after a few seconds.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if no workbook is newer than the last build"
+        type: boolean
+        default: false
+  schedule:
+    # :40 every 3 hours UTC = 00:40, 03:40, 06:40 ... WIB (UTC+7)
+    - cron: "40 */3 * * *"
+
+concurrency:
+  group: sell-through-pipeline
+  cancel-in-progress: false
+
+env:
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+  PYTHONIOENCODING: utf-8
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+  NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@lmbg.co.id' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Compile the workbooks and publish Distributor_Sales.parquet
+        run: python -u sell_through.py run ${{ inputs.force && '--force' || '' }}
+
+      - name: Email on failure
+        if: failure()
+        run: python notify.py failure "Sell Through pipeline failed" "The compile or its checks failed - see the run log at $RUN_URL"

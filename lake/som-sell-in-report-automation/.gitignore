@@ -1,0 +1,9 @@
+.venv/
+work/
+work_*.log
+__pycache__/
+*.pyc
+gcp_key.json
+.env
+*.xlsx
+*.parquet

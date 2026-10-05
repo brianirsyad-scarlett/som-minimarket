@@ -1,0 +1,172 @@
+name: Sell In + PCC Pipeline
+
+# Runs after the Odoo (hourly), Anchanto (every 6 h) and Accurate (daily) pipelines
+# (separate repos). GitHub starts scheduled runs late, so instead of guessing one
+# start time this is scheduled after each Anchanto run and gate.py only lets it
+# through once neither Odoo nor Anchanto is still running, every input is recent,
+# and something is newer than the last Primary_Sales build.
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "Months to rebuild: YYYY-MM, current or prev, comma-separated"
+        default: "prev,current"
+        required: true
+      anchanto_scope:
+        description: "quarter = same Anchanto files as the local report; all = every file"
+        default: "quarter"
+        type: choice
+        options: [quarter, all]
+      force:
+        description: "Run even if the inputs are not all from today"
+        type: boolean
+        default: true
+      final:
+        description: "Last slot of the night: inputs still missing is an error (emailed)"
+        type: boolean
+        default: false
+  # The Power Automate timer dispatches every slot with force=false, and the
+  # 07:00 one with final=true - the same as the crons below would.
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
+  schedule:
+    # WIB (UTC+7): 00:55, 06:55, 12:55, 18:55 - 25 min after each Anchanto run
+    # starts (it takes ~22 min). If Anchanto or Odoo is still running the gate
+    # waits and the Power Automate slots / next slot pick it up.
+    - cron: "55 5,11,17,23 * * *"
+    # 07:00 WIB: the last check of the morning - an input that is still too old
+    # fails the run, which emails.
+    - cron: "0 0 * * *"
+
+concurrency:
+  group: sell-in-pipeline
+  cancel-in-progress: false
+
+env:
+  # 'current' / 'prev' are resolved from today's date - make that Jakarta's today.
+  TZ: Asia/Jakarta
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+  PYTHONIOENCODING: utf-8
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+  NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@lmbg.co.id' }}
+
+jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh sell-in-pipeline.yml 55
+
+  sell-in:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Gate - are Odoo and Anchanto done and something new to build?
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ] && args+=(--force)
+          [ "${{ github.event.schedule }}" = "0 0 * * *" ] && args+=(--final)
+          [ "${{ inputs.final }}" = "true" ] && args+=(--final)
+          python -u gate.py "${args[@]}"
+
+      # ---------------- Sell In ----------------
+      - name: Download inputs (Odoo, Accurate, E-Stock, Master Data Sales, Anchanto.parquet)
+        if: steps.gate.outputs.run == 'true'
+        run: python download_inputs.py
+
+      - name: Download monthly history
+        if: steps.gate.outputs.run == 'true'
+        run: python download_history.py
+
+      - name: Build monthly workbooks
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          args=()
+          IFS=',' read -ra months <<< "${{ inputs.months || 'prev,current' }}"
+          for m in "${months[@]}"; do args+=(--month "$(echo "$m" | xargs)"); done
+          python -u sales_monthly_report.py "${args[@]}" --no-backup \
+            --anchanto-scope "${{ inputs.anchanto_scope || 'quarter' }}"
+
+      - name: Workbooks -> monthly parquet
+        if: steps.gate.outputs.run == 'true'
+        run: python -u build_primary_parquet.py month work/output/*/*.xlsx
+
+      - name: Combine -> Primary_Sales.parquet
+        if: steps.gate.outputs.run == 'true'
+        run: python -u build_primary_parquet.py combine work/monthly_parquet work/Primary_Sales.parquet
+
+      - name: Compare rebuilt months with production (informational)
+        if: steps.gate.outputs.run == 'true'
+        continue-on-error: true
+        run: |
+          files=()
+          for x in work/output/*/*.xlsx; do files+=("work/monthly_parquet/$(basename "${x%.xlsx}").parquet"); done
+          python -u compare_with_production.py "${files[@]}"
+
+      - name: Upload Sell In outputs to GCS
+        if: steps.gate.outputs.run == 'true'
+        run: python upload_outputs.py
+
+      # ---------------- PCC ----------------
+      - name: PCC Sales (Primary_Sales + Anchanto)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          python -u pcc.py sales --primary work/Primary_Sales.parquet \
+            --anchanto work/inputs/Anchanto.parquet --out work/pcc/PCC_Sales.parquet
+          python gcs_copy.py put work/pcc/PCC_Sales.parquet "sales_parquet/raw/primary/pcc/PCC_Sales.parquet"
+
+      - name: PCC Order Number (+ unmatched cities)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          python gcs_copy.py get "sales_order_number/" work/order_number/
+          python gcs_copy.py get "sales_parquet/Master_Order Number City.csv" work/master_city.csv
+          python -u pcc.py orders --csv-dir work/order_number --master work/master_city.csv \
+            --out work/pcc/PCC_Order_Number.parquet --unmatched work/pcc/unmatched_cities.csv
+          python gcs_copy.py put work/pcc/PCC_Order_Number.parquet "sales_parquet/raw/primary/pcc/PCC_Order_Number.parquet"
+
+      - name: Email unmatched cities
+        if: steps.gate.outputs.run == 'true'
+        run: python notify.py unmatched work/pcc/unmatched_cities.csv
+
+      # The laptop mirror no longer uploads Anchanto / Primary_Sales / PCC_Sales /
+      # PCC_Order_Number (2026-10-01), so this is what keeps the production names
+      # in sales_parquet/ current. Backs the old files up to sales_parquet/backup/ first.
+      - name: Promote Primary_Sales, Anchanto and PCC parquets to production
+        if: steps.gate.outputs.run == 'true'
+        run: python -u promote_to_production.py --apply
+
+      - name: Email on failure
+        if: failure()
+        run: python notify.py failure "Sell In + PCC pipeline failed" "A step failed - see the run log."
