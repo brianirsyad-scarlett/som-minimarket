@@ -365,7 +365,16 @@ def q_anchanto(paths: Sequence[Path], start: dt.date, end: dt.date) -> pl.DataFr
 
         for name, load in loaders:
             t0 = time.perf_counter()
-            df = load().to_polars()
+            try:
+                df = load().to_polars()
+            except BaseException as exc:  # pyo3 PanicException derives from BaseException
+                # calamine panics on a header-only table (A1:R1) - e.g. the empty
+                # Nov/Dec tables of a freshly started quarter. That is zero rows.
+                if "invalid range bounds" not in str(exc):
+                    raise
+                log.info("    %-28s %8d rows kept  (header-only table)  %s",
+                         name, 0, path.name)
+                continue
             df = _as_date(df, "CreatedOn", "SentOn")
             df = df.filter(pl.col("SentOn").is_between(start, end))
             if df.height:
