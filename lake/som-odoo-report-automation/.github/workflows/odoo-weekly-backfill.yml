@@ -1,0 +1,60 @@
+name: Odoo Weekly Backfill
+
+on:
+  workflow_dispatch: {}
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
+  schedule:
+    # Monday 00:00 Asia/Jakarta (WIB, UTC+7) = Sunday 17:00 UTC.
+    - cron: "0 17 * * 0"
+
+jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh odoo-weekly-backfill.yml day
+
+  backfill:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write .env from secrets
+        run: |
+          cat <<EOF > .env
+          ODOO_URL=${{ secrets.ODOO_URL }}
+          ODOO_DB=${{ secrets.ODOO_DB }}
+          ODOO_USERNAME=${{ secrets.ODOO_USERNAME }}
+          ODOO_PASSWORD=${{ secrets.ODOO_PASSWORD }}
+          EOF
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Run full backfill (every quarter Q1 through today)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+        run: python run_full_backfill.py

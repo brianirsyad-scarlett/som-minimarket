@@ -1,0 +1,98 @@
+name: Odoo Quarterly Export
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_email:
+        description: "Send the unmatched-customer email even if already sent today"
+        type: boolean
+        default: false
+  # On time: Power Automate 'GitHub timer' -> dispatch.yml. Cron = backup only.
+  schedule:
+    # Every hour at :12 (the exact-hour slots are the ones GitHub delays most).
+    # The export takes ~6 min, so by :55 the Sell In + PCC gate sees it finished.
+    - cron: "12 * * * *"
+
+concurrency:
+  group: odoo-export
+  cancel-in-progress: false
+
+jobs:
+  # Backup (cron) runs skip themselves when the on-time run started by
+  # dispatch.yml (Power Automate "GitHub timer") already did the work - guard.sh.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash guard.sh odoo-export.yml 50
+
+  export:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write .env from secrets
+        run: |
+          cat <<EOF > .env
+          ODOO_URL=${{ secrets.ODOO_URL }}
+          ODOO_DB=${{ secrets.ODOO_DB }}
+          ODOO_USERNAME=${{ secrets.ODOO_USERNAME }}
+          ODOO_PASSWORD=${{ secrets.ODOO_PASSWORD }}
+          EOF
+
+      - name: Write GCS credentials from secret
+        run: |
+          cat <<'EOF' > gcp_key.json
+          ${{ secrets.GCP_SA_KEY }}
+          EOF
+
+      - name: Download reference/prior-quarter files from GCS
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+        run: python download_from_gcs.py
+
+      # Always two quarters: the one just closed gets a final export while the
+      # new one is still (nearly) empty, and late edits to the previous quarter land.
+      - name: Run Odoo quarterly export (previous + current quarter)
+        run: python odoo_quarterly_export.py --include-previous
+
+      - name: Build previous quarter Odoo Report
+        run: python build_odoo_report.py --quarter previous --replace-production
+
+      - name: Build current quarter Odoo Report
+        run: python build_odoo_report.py --replace-production
+
+      - name: Check customers against Master Data Customer Odoo (email if unmatched)
+        # Never fails the run: a missing master row is a data issue for the user to fix.
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+        run: python check_customer_master.py ${{ inputs.force_email && '--force-email' || '' }}
+
+      - name: Build master Odoo Report
+        run: python build_master_report.py --replace-production
+
+      - name: Upload outputs to GCS
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+        run: python upload_to_gcs.py
