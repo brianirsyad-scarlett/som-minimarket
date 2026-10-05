@@ -1,0 +1,132 @@
+name: Sell Through to GCS
+
+# Every 30 minutes:
+#   1. sync.py          OneDrive -> gs://bucket_som/sales_parquet/raw/sell_through/Sell_Through_Offline_GT/
+#                       (only workbooks OneDrive holds a newer copy of)
+#   2. sell_through.py  compile the ten workbooks -> draft -> validate -> publish
+#                       gs://bucket_som/sales_parquet/Distributor_Sales.parquet
+#                       (the file BigQuery's raw_offline_distributor_sales reads).
+#                       Skipped when no workbook is newer than the last build, and nothing is
+#                       published when the table is identical to production.
+#   3. national_distribution.py  rebuild "National Distribution Raw_20260701_20260930.xlsx" and
+#                       "..._20261001_20261231.xlsx" in the same bucket folder from that parquet +
+#                       gs://bucket_som/sales_parquet/raw/master data/Master Data Sales.xlsx
+#                       (the previous file is backed up under raw/sell_through/cloud/backup/).
+#
+# Started on time by the Power Automate "GitHub timer" (issue -> dispatch.yml -> this workflow), because
+# GitHub's own cron can start hours late or not at all; the cron below is only the backup.
+#
+# Until the GCP_SA_KEY secret exists the run ends green after the first step, so this can
+# stay enabled while the secrets are being added.
+on:
+  schedule:
+    - cron: "10,40 * * * *"      # every 30 min (UTC); off the :00/:30 rush, GitHub still may delay it
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if no workbook is newer than the last build"
+        type: boolean
+        default: false
+
+concurrency:
+  group: som-sellthrough
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write     # only used to keep this workflow enabled (last step)
+
+env:
+  PYTHONIOENCODING: utf-8
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp_key.json
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check secrets are configured
+        id: ready
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          MS_TOKEN_CACHE: ${{ secrets.MS_TOKEN_CACHE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          missing=""
+          for n in GCP_SA_KEY MS_TOKEN_CACHE AZURE_TENANT_ID AZURE_CLIENT_ID; do
+            [ -n "$(printf '%s' "${!n}" | tr -d '[:space:]')" ] || missing="$missing $n"
+          done
+          if [ -z "$missing" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secret(s) missing or empty:$missing - nothing was synced. See README.md."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.ready.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.ready.outputs.ready == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.ready.outputs.ready == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Write GCS credentials
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+      - name: OneDrive -> GCS
+        id: sync
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          MS_TOKEN_CACHE: ${{ secrets.MS_TOKEN_CACHE }}
+        run: python -u sync.py
+
+      # Still builds if the sync failed: the laptop's mirror daemon may have uploaded newer files.
+      - name: Compile and publish Distributor_Sales.parquet
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        run: python -u sell_through.py run ${{ inputs.force && '--force' || '' }}
+
+      # Reads the Distributor_Sales.parquet just published + Master Data Sales.xlsx, and rebuilds the
+      # two quarter workbooks (no Excel needed). Skipped when neither input is newer than the workbooks.
+      # Names only, never values: an EMPTY secret (gh secret set with nothing pasted) looks set but sends nothing.
+      - name: Mail secrets present?
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+        run: |
+          for n in SMTP_USER SMTP_APP_PASSWORD; do
+            v="${!n}"
+            if [ -n "$(printf '%s' "$v" | tr -d '[:space:]')" ]; then echo "$n: set"; else echo "::warning::$n is EMPTY - re-set it (the email cannot be sent)"; fi
+          done
+          pw="$(printf '%s' "$SMTP_APP_PASSWORD" | tr -d '[:space:]')"
+          [ -z "$pw" ] || [ "${#pw}" -eq 16 ] || echo "::warning::SMTP_APP_PASSWORD is not 16 characters (a Google app password has 16)"
+
+      - name: Build the National Distribution quarter workbooks
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          NOTIFY_TO: ${{ vars.NOTIFY_TO || 'brian.rinaldy@lmbg.co.id' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python -u national_distribution.py run ${{ inputs.force && '--force' || '' }}
+
+      # GitHub switches scheduled workflows off in a public repo after 60 days without repository
+      # activity - no matter how often they ran or succeeded. Re-enabling the workflow through the API
+      # is the documented keep-alive: it restarts that clock, so doing it on every run keeps it from expiring.
+      - name: Keep this workflow enabled
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/sync.yml/enable" || echo "::warning::could not re-enable the workflow"

@@ -1,0 +1,9 @@
+# never commit credentials or the Microsoft token cache
+.msal/
+token_cache.json
+*.json
+!package.json
+gcp.json
+application_default_credentials.json
+.env
+__pycache__/

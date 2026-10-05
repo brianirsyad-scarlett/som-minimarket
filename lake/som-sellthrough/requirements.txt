@@ -1,0 +1,9 @@
+# pandas / openpyxl / pyarrow are pinned to the versions the laptop's compiler and the
+# existing Sell Through pipeline run, so the table comes out identical.
+pandas==3.0.5
+openpyxl==3.1.5
+pyarrow==25.0.1
+google-cloud-storage>=2.14
+msal>=1.31
+requests>=2.32
+xlsxwriter>=3.2
