@@ -99,6 +99,20 @@ jobs:
 
       # Reads the Distributor_Sales.parquet just published + Master Data Sales.xlsx, and rebuilds the
       # two quarter workbooks (no Excel needed). Skipped when neither input is newer than the workbooks.
+      # Names only, never values: an EMPTY secret (gh secret set with nothing pasted) looks set but sends nothing.
+      - name: Mail secrets present?
+        if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+        run: |
+          for n in SMTP_USER SMTP_APP_PASSWORD; do
+            v="${!n}"
+            if [ -n "$(printf '%s' "$v" | tr -d '[:space:]')" ]; then echo "$n: set"; else echo "::warning::$n is EMPTY - re-set it (the email cannot be sent)"; fi
+          done
+          pw="$(printf '%s' "$SMTP_APP_PASSWORD" | tr -d '[:space:]')"
+          [ -z "$pw" ] || [ "${#pw}" -eq 16 ] || echo "::warning::SMTP_APP_PASSWORD is not 16 characters (a Google app password has 16)"
+
       - name: Build the National Distribution quarter workbooks
         if: ${{ !cancelled() && steps.ready.outputs.ready == 'true' }}
         env:
