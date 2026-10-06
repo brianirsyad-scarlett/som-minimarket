@@ -77,6 +77,9 @@ P_MASTER = DATA / "Master Data Sales" / "Matrix" / "Master Data Sales.xlsx"
 # "$", "Report" or ".ini" - a stray "*.bak.xlsx" there would be counted twice.
 TMP_DIR = HERE / ".tmp"
 BACKUP_DIR = HERE / "backups"
+# Newest backups kept per month workbook (~100 MB each). Unbounded, this grew by
+# ~3 GB a month - September alone left 31 copies - before 2026-10-06.
+BACKUP_KEEP = 3
 LOG_FILE = HERE / "run.log"
 
 MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -558,6 +561,15 @@ def publish(staged: Path, target: Path, backup: bool) -> None:
         kept = BACKUP_DIR / f"{target.stem} {stamp}{target.suffix}"
         shutil.copy2(target, kept)
         log.info("Backed up previous file -> %s", kept)
+        # The stamp sorts chronologically, so name order is age order. Matching
+        # on the exact "<stem> YYYYMMDD-HHMMSS<suffix>" shape leaves every other
+        # file in backups/ (the yearly .bak files, anchanto/) alone.
+        shape = re.compile(re.escape(target.stem) + r" \d{8}-\d{6}" + re.escape(target.suffix) + "$")
+        mine = sorted((p for p in BACKUP_DIR.iterdir() if p.is_file() and shape.match(p.name)),
+                      key=lambda p: p.name, reverse=True)
+        for stale in mine[BACKUP_KEEP:]:
+            stale.unlink()
+            log.info("Pruned old backup %s", stale.name)
     try:
         try:
             # Atomic when staging and target share a volume, which they do for the
