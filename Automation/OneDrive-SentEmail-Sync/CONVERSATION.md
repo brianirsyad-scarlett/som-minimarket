@@ -35,7 +35,8 @@ PowerShell (Admin). A session running on the PC itself (Claude Desktop, or `clau
 
 | File | Status |
 |---|---|
-| `SETUP.md` | **Use this**: step-by-step instructions + the working PowerShell block |
+| `SETUP.md` | **Windows**: step-by-step instructions + the working PowerShell block |
+| `SETUP_MAC.md` | **macOS / iMac**: rsync + launchd version (not yet run; untested) |
 | `CONVERSATION.md` | This handoff |
 | `sync_sent_email.py` | Early Python/robocopy loop version. **Not used** by the final setup |
 | `register_schedule.ps1` | Early task registration for the Python script. **Not used**; never confirmed working |
@@ -50,5 +51,6 @@ PowerShell (Admin). A session running on the PC itself (Claude Desktop, or `clau
 
 ## Prompt to give Claude on the other computer
 
-> Read `Automation/OneDrive-SentEmail-Sync/CONVERSATION.md` and `SETUP.md`, then set up the
-> Sent Email -> OneDrive sync on this computer. Confirm the folder paths with me first.
+> Read `Automation/OneDrive-SentEmail-Sync/CONVERSATION.md` and the setup file for this OS
+> (`SETUP.md` for Windows, `SETUP_MAC.md` for macOS), then set up the Sent Email -> OneDrive sync
+> on this computer. Confirm the folder paths with me first.
